@@ -2,10 +2,16 @@
 
 import { useState } from "react";
 
+
 export default function Home() {
+
+  const [jobDescription, setJobDescription] = useState("");
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<any>(null);
+  const [matches, setMatches] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState("");
 
   const [selectedRoles, setSelectedRoles] = useState<string[]>([
     "Junior Software Engineer",
@@ -37,15 +43,24 @@ export default function Home() {
     }
 
     setLoading(true);
+    setLoadingStep("📄 Reading your CV...");
     setAnalysis(null);
+    setMatches(null);
 
+    
     try {
-      const formData = new FormData();
-      formData.append("cv", selectedFile);
-      formData.append(
-  "roles",
-  JSON.stringify(selectedRoles)
-);
+  const formData = new FormData();
+  formData.append("cv", selectedFile);
+
+  formData.append(
+    "roles",
+    JSON.stringify(selectedRoles)
+  );
+
+  formData.append(
+    "jobDescription",
+    jobDescription
+  );
 
       const controller = new AbortController();
 
@@ -63,21 +78,94 @@ clearTimeout(timeout);
 
       const data = await response.json();
 
-      setAnalysis(JSON.parse(data.analysis));
-      
+if (!response.ok) {
+  throw new Error(data.details || data.error || "Analysis failed.");
+}
+
+console.log("RAW AI RESPONSE:", data.analysis);
+
+setLoadingStep("🤖 AI analysing your CV...");
+
+const candidateAnalysis =
+  typeof data.analysis === "string"
+    ? JSON.parse(data.analysis)
+    : data.analysis;
+
+setAnalysis(candidateAnalysis);
+
+setLoadingStep("🧠 AI ranking the best jobs...");
+// Get jobs from Adzuna
+const jobsResponse = await fetch("/api/jobs", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    role: selectedRoles[0],
+    location: "London",
+  }),
+});
+
+const jobsData = await jobsResponse.json();
+
+console.log("JOBS FOUND:", jobsData);
+
+
+const jobs = jobsData.slice(0,5).map((job:any)=>({
+  title: job.title,
+  company: job.company,
+  location: job.location,
+  url: job.url,
+  description: job.description?.slice(0,500)
+}));
+
+console.log("JOBS FOR AI:", jobs);
+
+console.log("STEP 1 - JOBS DATA TYPE:", typeof jobsData);
+console.log("STEP 2 - JOBS ARRAY:", jobs);
+
+console.log("SENDING TO MATCH AI:", {
+  candidate: candidateAnalysis,
+  jobs
+});
+
+
+console.log("STEP 3 - ABOUT TO CALL MATCH API");
+// Match jobs with AI
+const matchResponse = await fetch("/api/match", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    candidate: candidateAnalysis,
+    jobs,
+  }),
+});
+
+console.log("STEP 4 - MATCH API RESPONSE RECEIVED");
+
+const matchResults = await matchResponse.json();
+
+console.log("STEP 5 - MATCH RESULT:", matchResults);
+
+console.log("AI JOB MATCHES:", matchResults);
+
+console.log("SETTING MATCHES:", matchResults.matches);
+
+setMatches(matchResults.matches);
+
+console.log("AFTER SET:", matchResults.matches);
+
       
        console.log("Server response:", data);
-
-      if (!response.ok) {
-        throw new Error(data.details || data.error || "Analysis failed.");
-      }
-
       
     } catch (error) {
       console.error(error);
       alert("Something went wrong while analysing your CV.");
     } finally {
       setLoading(false);
+      setLoadingStep("");
     }
   }
 
@@ -94,9 +182,9 @@ clearTimeout(timeout);
         </p>
 
         {/* CV Upload */}
-        <div className="mt-8 rounded-xl bg-white p-6 shadow">
+        <div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">
 
-          <h2 className="text-2xl font-semibold">
+          <h2 className="text-2xl font-semibold text-gray-900">
             Your CV
           </h2>
 
@@ -133,31 +221,54 @@ clearTimeout(timeout);
 
         {/* Target Roles */}
 
-        <div className="mt-6 rounded-xl bg-white p-6 shadow">
+        <div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">
 
-          <h2 className="text-2xl font-semibold">
+          <h2 className="text-2xl font-semibold text-gray-900">
             Target Roles
           </h2>
 
           <div className="mt-4 flex flex-wrap gap-3">
 
             {roles.map((role) => (
-              <button
-                key={role}
-                onClick={() => toggleRole(role)}
-                className={`rounded-full px-4 py-2 transition ${
-                  selectedRoles.includes(role)
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-200 hover:bg-gray-300"
-                }`}
-              >
-                {role}
-              </button>
-            ))}
+  <button
+    key={role}
+    onClick={() => toggleRole(role)}
+    className={`rounded-full px-4 py-2 transition ${
+      selectedRoles.includes(role)
+        ? "bg-blue-600 text-white"
+        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+    }`}
+  >
+    {role}
+  </button>
+))}
 
           </div>
 
         </div>
+
+{/* Job Description */}
+
+<div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">
+
+  <h2 className="text-2xl font-semibold text-gray-900">
+    Job Description
+  </h2>
+
+  <p className="mt-2 text-gray-600">
+    Paste the job description you want to compare your CV against.
+  </p>
+
+  <textarea
+  value={jobDescription}
+  onChange={(e) => setJobDescription(e.target.value)}
+  placeholder="Paste the full job advert here..."
+  rows={10}
+  className="mt-4 w-full rounded-lg border border-gray-300 bg-white p-4 text-gray-900 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+/>
+
+</div>
+
 
         {/* Analyse Button */}
 
@@ -166,89 +277,218 @@ clearTimeout(timeout);
           disabled={loading}
           className="mt-6 w-full rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {loading ? "Analysing CV..." : "Find Suitable Jobs"}
+          
+          {loading ? loadingStep : "Find Suitable Jobs"}
         </button>
+        
+  
+      {/* AI Output */}
 
-                {/* AI Output */}
+{analysis && (
+  <div className="mt-8 rounded-xl bg-white p-6 text-gray-900 shadow">
 
-        {analysis && (
-          <div className="mt-8 rounded-xl bg-white p-6 shadow">
+  <h2 className="text-2xl font-semibold">
+      AI Analysis
+    </h2>
 
-            <h2 className="text-2xl font-semibold">
-              AI Analysis
-            </h2>
+    <h3 className="mt-6 text-xl font-semibold">
+      Match Score
+    </h3>
 
-            <div className="mt-6">
+    <p className="mt-2 text-3xl font-bold">
+      {analysis.matchScore}%
+    </p>
 
-              <h3 className="text-xl font-semibold">
-                Candidate Summary
+    <p className="mt-2 font-semibold">
+      {analysis.matchScore >= 80
+        ? "🟢 Strong Match"
+        : analysis.matchScore >= 50
+        ? "🟡 Possible Match"
+        : "🔴 Weak Match"}
+    </p>
+
+
+    <div className="mt-3 h-3 w-full rounded-full bg-gray-200">
+      <div
+        className="h-3 rounded-full bg-blue-600"
+        style={{
+          width: `${analysis.matchScore}%`
+        }}
+      />
+    </div>
+
+
+    <h3 className="mt-6 text-xl font-semibold">
+      Candidate Summary
+    </h3>
+
+    <p className="mt-2 text-gray-700">
+      {analysis.summary}
+    </p>
+
+
+    <h3 className="mt-6 text-xl font-semibold">
+      Recommendation
+    </h3>
+
+    <p className="mt-2 text-gray-700">
+      {analysis.recommendation}
+    </p>
+
+
+    <h3 className="mt-6 text-xl font-semibold">
+      Matching Skills
+    </h3>
+
+    <div className="mt-3 flex flex-wrap gap-2">
+
+      {analysis.matchingSkills?.map((skill:string)=>(
+        <span
+          key={skill}
+          className="rounded-full bg-blue-100 px-3 py-1 text-blue-700"
+        >
+          {skill}
+        </span>
+      ))}
+
+    </div>
+
+
+    <h3 className="mt-6 text-xl font-semibold">
+      Missing Skills
+    </h3>
+
+   <ul className="mt-2 list-disc pl-5">
+
+  {analysis.missingSkills?.length > 0 ? (
+
+    analysis.missingSkills.map((skill:string)=>(
+      <li key={skill}>
+        {skill}
+      </li>
+    ))
+
+  ) : (
+
+    <li>
+      No major skill gaps detected 🎉
+    </li>
+
+  )}
+
+</ul>
+
+    {/* JOB MATCHES */}
+
+    {matches && matches.length > 0 && (
+
+      <div className="mt-10">
+
+        <h2 className="text-3xl font-bold">
+          🎯 Best Job Matches
+        </h2>
+
+        <p className="mt-2 text-gray-600">
+          Ranked by AI based on your CV.
+        </p>
+
+
+        <div className="mt-6 space-y-6">
+
+
+          {matches.map((job:any,index:number)=>(
+
+            <div
+              key={index}
+              className="rounded-xl border bg-white p-6 shadow-sm"
+            >
+
+
+              <h3 className="text-xl font-bold">
+                {job.title}
               </h3>
 
-              <p className="mt-2 text-gray-700">
-                {analysis.summary}
+
+              <p className="text-gray-600">
+                {job.company}
               </p>
 
 
-              <h3 className="mt-6 text-xl font-semibold">
-                Technical Skills
-              </h3>
+              <p className="mt-1 text-sm text-gray-500">
+                📍 {job.location}
+              </p>
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                {analysis.skills.map((skill: string) => (
-                  <span
-                    key={skill}
-                    className="rounded-full bg-blue-100 px-3 py-1 text-blue-700"
-                  >
-                    {skill}
-                  </span>
-                ))}
+
+              <div className="mt-4">
+
+                <span className="rounded-full bg-blue-600 px-4 py-2 font-bold text-white">
+                  {job.matchScore}%
+                </span>
+
               </div>
 
 
-              <h3 className="mt-6 text-xl font-semibold">
-                Recommended Roles
-              </h3>
-
-              <ul className="mt-2 list-disc pl-5 text-gray-700">
-                {analysis.recommendedRoles.map((role: string) => (
-                  <li key={role}>
-                    {role}
-                  </li>
-                ))}
-              </ul>
+              <h4 className="mt-5 font-semibold">
+                Why you're a good fit
+              </h4>
 
 
-              <h3 className="mt-6 text-xl font-semibold">
+              <p className="mt-2 text-gray-700">
+                {job.reason}
+              </p>
+
+
+              <h4 className="mt-5 font-semibold">
                 Missing Skills
-              </h3>
-
-              <ul className="mt-2 list-disc pl-5 text-gray-700">
-                {analysis.missingSkills.map((skill: string) => (
-                  <li key={skill}>
-                    {skill}
-                  </li>
-                ))}
-              </ul>
+              </h4>
 
 
-              <h3 className="mt-6 text-xl font-semibold">
-                CV Improvements
-              </h3>
+              {job.missingSkills?.length > 0 ? (
 
-              <ul className="mt-2 list-disc pl-5 text-gray-700">
-                {analysis.cvImprovements.map((item: string) => (
-                  <li key={item}>
-                    {item}
-                  </li>
-                ))}
-              </ul>
+                <ul className="mt-2 list-disc pl-5">
+
+                  {job.missingSkills.map((skill:string)=>(
+                    <li key={skill}>
+                      {skill}
+                    </li>
+                  ))}
+
+                </ul>
+
+              ) : (
+
+                <p className="mt-2 text-green-600">
+                  No major skill gaps detected.
+                </p>
+
+              )}
+
+
+              <a
+                href={job.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white"
+              >
+                Apply Now →
+              </a>
+
 
             </div>
 
-          </div>
-        )}
+          ))}
+
+
+        </div>
 
       </div>
-    </main>
-  );
+
+    )}
+
+
+  </div>
+)}    
+ </div>
+</main>
+);
 }
