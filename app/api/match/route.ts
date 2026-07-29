@@ -6,32 +6,16 @@ export async function POST(req: Request) {
   try {
     const { candidate, jobs } = await req.json();
 
-    const matches = [];
-
-    for (const job of jobs) {
+    const jobPromises = jobs.slice(0, 10).map(async (job: any) => {
       console.log("Scoring:", job.title);
 
       const prompt = `
-You are a job matching AI.
+You are an expert job matching AI.
 
-Candidate profile:
+Compare the candidate against the job description.
+
+Candidate:
 ${JSON.stringify(candidate)}
-
-IMPORTANT:
-
-Do not assume the candidate matches because they are a software engineer.
-
-Compare:
-1. Required technologies
-2. Required experience
-3. Industry/domain knowledge
-4. Missing requirements
-
-Be realistic.
-
-A junior candidate with transferable skills should not automatically score above 80.
-
-Only give 80+ when most requirements are directly matched.
 
 Job Title:
 ${job.title}
@@ -40,133 +24,144 @@ Company:
 ${job.company}
 
 Job Description:
-${job.description.slice(0, 300)}
+${job.description.slice(0, 800)}
 
-Return ONLY JSON.
+Important:
+- Write the reason in professional English.
+- Use correct grammar and punctuation.
+- If referring to the candidate, use "Stanley's".
+- Never use "Stanley'n".
 
-Format:
+Rules:
+- Output valid JSON only.
+- No markdown.
+- No explanations outside the JSON.
+- Use integer scores only.
+- Base the score only on the candidate profile and job description.
+- If a required skill is missing, include it in "missingSkills".
+- Calculate matchScore as the average of the four breakdown scores.
+- The reason field MUST be a single sentence under 30 words.
+- The strengths array should contain 2-3 specific reasons why the candidate fits this role.
+- All breakdown scores must be between 0 and 100.
+- Do not inflate scores.
+- Missing core requirements should reduce scores.
+- Consider junior and graduate expectations.
+
+Return JSON in this exact format:
 
 {
-  "title":"",
-  "company":"",
-  "matchScore":0,
-  "breakdown":{
-    "technicalSkills":0,
-    "experienceLevel":0,
-    "projects":0,
-    "growthPotential":0
+  "matchScore": 0,
+  "reason": "",
+  "strengths": [],
+  "breakdown": {
+    "technicalSkills": 0,
+    "experienceLevel": 0,
+    "projects": 0,
+    "growthPotential": 0
   },
-  "reason":"",
-  "missingSkills":[]
+  "missingSkills": []
 }
-
-Scoring breakdown:
-
-technicalSkills:
-How closely the candidate's technologies match the job.
-
-experienceLevel:
-Whether the role matches junior/graduate experience.
-
-projects:
-Whether the candidate's projects demonstrate relevant ability.
-
-growthPotential:
-Whether the candidate could realistically succeed with some learning.
-
-The final matchScore should be an average of these factors.
-
-MatchScore rules:
-
-90-100 = Excellent match.
-70-89 = Strong match.
-50-69 = Possible match.
-30-49 = Weak match.
-0-29 = Poor match.
-
-Never output single digit scores.
-Use realistic percentages.
-
-Important rules:
-- Do not invent company names.
-- Do not change candidate names.
-- Use professional grammar.
-- Only use information provided in the CV and job description.
-- If a skill is missing, state it clearly and accurately.
-
-Only analyse the match.
 `;
 
       const controller = new AbortController();
 
       const timeout = setTimeout(() => {
-  controller.abort();
-}, 180000);
+        controller.abort();
+      }, 180000);
 
-      const response = await fetch(
-        "http://localhost:11434/api/generate",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: "phi3.5:latest",
-            prompt,
-            stream: false,
-            format: "json",
-            options: {
-              temperature: 0,
-              num_predict: 250,
-              num_ctx: 1024,
-            },
-          }),
-        }
-      );
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        console.log("Ollama failed for", job.title);
-        continue;
-      }
-
-      const data = await response.json();
-
-      let result;
 
       try {
 
-  const cleaned = data.response
-    .replace(/```json/g, "")
-    .replace(/```/g, "")
-    .trim();
+        const response = await fetch(
+          "http://localhost:11434/api/generate",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: "phi3.5:latest",
+              prompt,
+              stream: false,
+              format: "json",
+              options: {
+                temperature: 0,
+                num_predict: 200,
+                num_ctx: 4096,
+              },
+            }),
+          }
+        );
 
-  result = JSON.parse(cleaned);
 
-} catch {
+        clearTimeout(timeout);
 
-  console.log(
-    "FAILED JSON:",
-    data.response
-  );
 
-  continue;
-}
-      matches.push({
-  title: job.title,
-  company: job.company,
-  location: job.location,
-  url: job.url,
-  matchScore: result.matchScore,
-  breakdown: result.breakdown,
-  reason: result.reason,
-  missingSkills: result.missingSkills,
-});
-    }
+        if (!response.ok) {
+          console.log("Ollama failed for", job.title);
+          return null;
+        }
 
-    matches.sort((a, b) => b.matchScore - a.matchScore);
+
+        const data = await response.json();
+
+
+        const result = JSON.parse(
+          data.response
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim()
+        );
+
+
+        return {
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          url: job.url,
+
+          salaryMin: job.salaryMin,
+          salaryMax: job.salaryMax,
+          contractType: job.contractType,
+          created: job.created,
+
+          matchScore: result.matchScore,
+          breakdown: result.breakdown,
+          reason: result.reason,
+          strengths: result.strengths,
+
+          missingSkills:
+            result.missingSkills?.filter(
+              (skill: string) => skill.trim() !== ""
+            ) || [],
+        };
+
+
+      } catch (error) {
+
+        console.log(
+          "FAILED SCORING:",
+          job.title,
+          error
+        );
+
+        return null;
+      }
+
+    });
+
+
+    const results = await Promise.all(jobPromises);
+
+
+    const matches = results
+      .filter((job) => job !== null)
+      .sort(
+        (a, b) =>
+          b.matchScore - a.matchScore
+      );
+
 
     console.log("Finished scoring jobs.");
     console.log("FINAL MATCHES:", matches);
@@ -175,7 +170,10 @@ Only analyse the match.
     return NextResponse.json({
       matches,
     });
+
+
   } catch (error) {
+
     console.error(error);
 
     return NextResponse.json(
@@ -186,5 +184,6 @@ Only analyse the match.
         status: 500,
       }
     );
+
   }
 }

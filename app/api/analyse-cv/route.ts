@@ -122,8 +122,14 @@ Example: 60 means 60 percent match.
 
 Return ONLY valid JSON.
 Keep responses concise.
+
 Summary: maximum 2 sentences.
 Recommendation: maximum 2 sentences.
+
+Limit projects to maximum 2.
+Each project should only contain name and skillsUsed.
+Limit all arrays to maximum 5 items.
+
 Do not include markdown.
 Do not stop before completing the JSON.
 `,
@@ -132,7 +138,7 @@ Do not stop before completing the JSON.
   options: {
     num_predict: 700,
     temperature: 0.2,
-    num_ctx: 2048
+    num_ctx: 4096
   }
 }),
     

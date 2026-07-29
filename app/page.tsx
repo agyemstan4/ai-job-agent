@@ -66,7 +66,7 @@ export default function Home() {
 
       const timeout = setTimeout(() => {
       controller.abort();
-      },  180000); // 3 minutes
+      },  300000); // 3 minutes
 
 const response = await fetch("/api/analyse-cv", {
   method: "POST",
@@ -111,12 +111,22 @@ const jobsData = await jobsResponse.json();
 console.log("JOBS FOUND:", jobsData);
 
 
-const jobs = jobsData.slice(0,5).map((job:any)=>({
+
+if (!Array.isArray(jobsData)) {
+  console.error("Jobs API failed:", jobsData);
+  return;
+}
+
+const jobs = jobsData.map((job:any)=>({
   title: job.title,
   company: job.company,
   location: job.location,
   url: job.url,
-  description: job.description?.slice(0,500)
+  description: job.description?.slice(0,500),
+  salaryMin: job.salary_min,
+  salaryMax: job.salary_max,
+  contractType: job.contract_type,
+  created: job.created
 }));
 
 console.log("JOBS FOR AI:", jobs);
@@ -299,13 +309,15 @@ console.log("AFTER SET:", matchResults.matches);
       {analysis.matchScore}%
     </p>
 
-    <p className="mt-2 font-semibold">
-      {analysis.matchScore >= 80
-        ? "🟢 Strong Match"
-        : analysis.matchScore >= 50
-        ? "🟡 Possible Match"
-        : "🔴 Weak Match"}
-    </p>
+   <p className="mt-2 font-semibold">
+  {analysis.matchScore >= 90
+    ? "🟢 Excellent Match"
+    : analysis.matchScore >= 75
+    ? "🟢 Strong Match"
+    : analysis.matchScore >= 60
+    ? "🟡 Moderate Match"
+    : "🔴 Weak Match"}
+</p>
 
 
     <div className="mt-3 h-3 w-full rounded-full bg-gray-200">
@@ -362,11 +374,11 @@ console.log("AFTER SET:", matchResults.matches);
 
   {analysis.missingSkills?.length > 0 ? (
 
-    analysis.missingSkills.map((skill:string)=>(
-      <li key={skill}>
-        {skill}
-      </li>
-    ))
+    analysis.missingSkills.map((skill: any, index: number) => (
+  <li key={index}>
+    {typeof skill === "string" ? skill : skill.skillName}
+  </li>
+))
 
   ) : (
 
@@ -400,42 +412,192 @@ console.log("AFTER SET:", matchResults.matches);
 
             <div
               key={index}
-              className="rounded-xl border bg-white p-6 shadow-sm"
+              className="rounded-2xl
+    border
+    border-gray-200
+    bg-white
+    p-8
+    shadow-sm
+    transition
+    duration-300
+    hover:-translate-y-1
+    hover:shadow-xl
+"
             >
 
 
-              <h3 className="text-xl font-bold">
-                {job.title}
-              </h3>
+              <div className="flex items-start justify-between">
+
+  <div>
+
+    <h3 className="text-2xl font-bold text-gray-900">
+  {job.title}
+</h3>
 
 
-              <p className="text-gray-600">
-                {job.company}
-              </p>
+<p className="text-gray-600">
+{job.company}
+</p>
+</div>
 
 
-              <p className="mt-1 text-sm text-gray-500">
-                📍 {job.location}
-              </p>
+  <div>
+
+    <span
+      className={`
+        rounded-full
+        px-4
+        py-2
+        text-lg
+        font-bold
+        ${
+  Number(job.matchScore) >= 75
+? "bg-green-100 text-green-700"
+: Number(job.matchScore) >= 60
+? "bg-yellow-100 text-yellow-700"
+: "bg-red-100 text-red-700"
+}
+      `}
+    >
+    {Number(job.matchScore)}% Match
+    </span>
+
+  </div>
+
+</div>
 
 
-              <div className="mt-4">
+<div className="mt-4">
 
-                <span className="rounded-full bg-blue-600 px-4 py-2 font-bold text-white">
-                  {job.matchScore}%
-                </span>
+  <div className="flex justify-between text-sm text-gray-600">
+    <span>AI Compatibility</span>
+    <span>{job.matchScore}%</span>
+  </div>
+
+  <div className="mt-2 h-3 rounded-full bg-gray-200">
+
+    <div
+      className="h-3 rounded-full bg-blue-600"
+      style={{
+  width: `${Number(job.matchScore)}%`
+}}
+    />
+
+  </div>
+
+</div>
+
+<p className="mt-1 text-sm text-gray-500">
+  📍 {job.location}
+</p>
+
+              {job.salaryMin && job.salaryMax && (
+  <p className="mt-2 text-green-600 font-semibold">
+    💷 £{job.salaryMin.toLocaleString()} - £{job.salaryMax.toLocaleString()}
+  </p>
+)}
+
+{job.contractType && (
+  <p className="text-sm text-gray-600">
+    📄 {job.contractType}
+  </p>
+)}
+
+{job.created && (
+  <p className="text-sm text-gray-500">
+    🕒 Posted: {new Date(job.created).toLocaleDateString()}
+  </p>
+)}
+
+              {job.breakdown && (
+  <div className="mt-6 grid grid-cols-2 gap-4">
+
+    <div className="rounded-xl bg-blue-50 p-4">
+      <p className="text-sm text-gray-600">
+        Technical Skills
+      </p>
+      <p className="mt-1 text-2xl font-bold text-blue-700">
+        {job.breakdown.technicalSkills}%
+      </p>
+    </div>
+
+
+    <div className="rounded-xl bg-green-50 p-4">
+      <p className="text-sm text-gray-600">
+        Experience
+      </p>
+      <p className="mt-1 text-2xl font-bold text-green-700">
+        {job.breakdown.experienceLevel}%
+      </p>
+    </div>
+
+
+    <div className="rounded-xl bg-purple-50 p-4">
+      <p className="text-sm text-gray-600">
+        Projects
+      </p>
+      <p className="mt-1 text-2xl font-bold text-purple-700">
+        {job.breakdown.projects}%
+      </p>
+    </div>
+
+
+    <div className="rounded-xl bg-orange-50 p-4">
+      <p className="text-sm text-gray-600">
+        Growth Potential
+      </p>
+      <p className="mt-1 text-2xl font-bold text-orange-700">
+        {job.breakdown.growthPotential}%
+      </p>
+    </div>
+
+  </div>
+)}
+
+              <div className="mt-5 rounded-xl bg-gray-50 p-5">
+
+                <h4 className="text-lg font-semibold">
+                  🤖 AI Recommendation
+                </h4>
+
+
+                <p className="mt-2 font-semibold">
+  {Number(job.matchScore) >= 90
+    ? "🟢 Excellent Match"
+    : Number(job.matchScore) >= 75
+    ? "🟢 Strong Match"
+    : Number(job.matchScore) >= 60
+    ? "🟡 Moderate Match"
+    : "🔴 Weak Match"}
+</p>
+
+                <p className="mt-3 text-sm text-gray-700 leading-relaxed">
+                  {job.reason}
+                </p>
+
+
+                <div className="mt-4">
+
+                  <p className="text-sm font-semibold">
+                    Why you stand out:
+                  </p>
+
+<ul className="mt-2 space-y-1 text-sm text-gray-700">
+
+  {job.strengths?.map((strength:string)=>(
+    <li key={strength}>
+      ✓ {strength}
+    </li>
+  ))}
+
+</ul>
+                 
+
+                </div>
 
               </div>
 
-
-              <h4 className="mt-5 font-semibold">
-                Why you're a good fit
-              </h4>
-
-
-              <p className="mt-2 text-gray-700">
-                {job.reason}
-              </p>
+              
 
 
               <h4 className="mt-5 font-semibold">
@@ -445,15 +607,25 @@ console.log("AFTER SET:", matchResults.matches);
 
               {job.missingSkills?.length > 0 ? (
 
-                <ul className="mt-2 list-disc pl-5">
+                <div className="mt-3 flex flex-wrap gap-2">
 
-                  {job.missingSkills.map((skill:string)=>(
-                    <li key={skill}>
-                      {skill}
-                    </li>
-                  ))}
+{job.missingSkills.map((skill:string)=>(
+  <span
+    key={skill}
+    className="
+      rounded-full
+      bg-red-100
+      px-3
+      py-1
+      text-sm
+      text-red-700
+    "
+  >
+    {skill}
+  </span>
+))}
 
-                </ul>
+</div>
 
               ) : (
 
@@ -468,7 +640,20 @@ console.log("AFTER SET:", matchResults.matches);
                 href={job.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-6 inline-block rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white"
+                className="
+mt-6
+inline-flex
+items-center
+rounded-lg
+bg-blue-600
+px-6
+py-3
+font-semibold
+text-white
+transition
+hover:bg-blue-700
+hover:scale-105
+"
               >
                 Apply Now →
               </a>
