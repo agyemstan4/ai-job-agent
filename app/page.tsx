@@ -5,7 +5,7 @@ import { useState } from "react";
 
 export default function Home() {
 
-  const [jobDescription, setJobDescription] = useState("");
+
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<any>(null);
@@ -57,16 +57,13 @@ export default function Home() {
     JSON.stringify(selectedRoles)
   );
 
-  formData.append(
-    "jobDescription",
-    jobDescription
-  );
+
 
       const controller = new AbortController();
 
       const timeout = setTimeout(() => {
-      controller.abort();
-      },  300000); // 3 minutes
+  controller.abort();
+}, 300000); // 5 minutes 
 
 const response = await fetch("/api/analyse-cv", {
   method: "POST",
@@ -256,29 +253,6 @@ console.log("AFTER SET:", matchResults.matches);
           </div>
 
         </div>
-
-{/* Job Description */}
-
-<div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">
-
-  <h2 className="text-2xl font-semibold text-gray-900">
-    Job Description
-  </h2>
-
-  <p className="mt-2 text-gray-600">
-    Paste the job description you want to compare your CV against.
-  </p>
-
-  <textarea
-  value={jobDescription}
-  onChange={(e) => setJobDescription(e.target.value)}
-  placeholder="Paste the full job advert here..."
-  rows={10}
-  className="mt-4 w-full rounded-lg border border-gray-300 bg-white p-4 text-gray-900 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
-/>
-
-</div>
-
 
         {/* Analyse Button */}
 

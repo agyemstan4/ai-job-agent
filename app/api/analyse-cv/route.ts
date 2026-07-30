@@ -11,15 +11,11 @@ export async function POST(request: Request) {
     const formData = await request.formData();
 
     const file = formData.get("cv");
-    const jobDescription = formData.get("jobDescription") as string;
     const roles = formData.get("roles");
     const selectedRoles = roles
   ? JSON.parse(roles.toString())
   : [];
   
-
-  
-  console.log("JOB DESCRIPTION:", jobDescription);
 
     if (!file || !(file instanceof File)) {
       return NextResponse.json(
@@ -45,6 +41,8 @@ export async function POST(request: Request) {
     console.log("Before Ollama call");
     console.log("Prompt length:", cvText.length);
 
+    console.log("CV characters:", cvText.length);
+
 
 
  console.time("Ollama");
@@ -58,18 +56,17 @@ export async function POST(request: Request) {
   prompt: `
 You are an AI Job Agent.
 
-Analyse the candidate CV and compare it against the job description.
+Analyse the candidate CV.
+
+Create a structured candidate profile for job matching.
+Evaluate the candidate's skills, experience, education, projects, and suitable roles.
 Create a structured candidate profile while evaluating job suitability.
 You are not writing a CV review.
-You are scoring how well this candidate matches this specific job.
+
 
 Candidate is interested in these roles:
 
 ${selectedRoles.join(", ")}
-
-JOB DESCRIPTION:
-
-${jobDescription}
 
 CANDIDATE CV:
 
@@ -136,9 +133,9 @@ Do not stop before completing the JSON.
   stream: false,
   format: "json",
   options: {
-    num_predict: 700,
+    num_predict: 400,
     temperature: 0.2,
-    num_ctx: 4096
+    num_ctx: 2048
   }
 }),
     
@@ -153,8 +150,9 @@ const response = await ollamaResponse.json();
 console.log("After Ollama call");
 console.log(response.response);
 console.log("Ollama finished");
-
 console.timeEnd("Ollama");
+
+
 
     return NextResponse.json({
       success: true,

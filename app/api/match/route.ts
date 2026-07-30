@@ -6,16 +6,42 @@ export async function POST(req: Request) {
   try {
     const { candidate, jobs } = await req.json();
 
-    const jobPromises = jobs.slice(0, 10).map(async (job: any) => {
+    const candidateSummary = {
+  summary: candidate.summary,
+  technicalSkills: candidate.technicalSkills,
+  experienceLevel: candidate.experienceLevel,
+  projects: candidate.projects,
+};
+
+
+    const jobPromises = jobs.slice(0, 3).map(async (job: any) => {
       console.log("Scoring:", job.title);
 
+console.log(
+  `${job.title} description length:`,
+  job.description.length
+);
+
+      console.time(`${job.title}-${job.company}`);
+
+console.log(
+  "Candidate summary length:",
+  JSON.stringify(candidateSummary).length
+);
+
+console.log(
+  "Original candidate length:",
+  JSON.stringify(candidate).length
+);
       const prompt = `
+      
 You are an expert job matching AI.
 
 Compare the candidate against the job description.
 
 Candidate:
-${JSON.stringify(candidate)}
+${JSON.stringify(candidateSummary)}
+
 
 Job Title:
 ${job.title}
@@ -24,7 +50,7 @@ Company:
 ${job.company}
 
 Job Description:
-${job.description.slice(0, 800)}
+${job.description.slice(0, 300)}
 
 Important:
 - Write the reason in professional English.
@@ -63,11 +89,15 @@ Return JSON in this exact format:
 }
 `;
 
-      const controller = new AbortController();
+console.log(
+  `${job.title} prompt length:`,
+  prompt.length
+);
+    const controller = new AbortController();
 
       const timeout = setTimeout(() => {
         controller.abort();
-      }, 180000);
+      }, 300000);
 
 
       try {
@@ -87,8 +117,8 @@ Return JSON in this exact format:
               format: "json",
               options: {
                 temperature: 0,
-                num_predict: 200,
-                num_ctx: 4096,
+                num_predict:180,
+                num_ctx: 1536,
               },
             }),
           }
@@ -103,16 +133,25 @@ Return JSON in this exact format:
           return null;
         }
 
+const data = await response.json();
 
-        const data = await response.json();
+let result;
 
+try {
+  result = JSON.parse(
+    data.response
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim()
+  );
+} catch (error) {
+  console.error(`❌ Invalid JSON from Ollama for ${job.title}:`);
+  console.log(data.response);
 
-        const result = JSON.parse(
-          data.response
-            .replace(/```json/g, "")
-            .replace(/```/g, "")
-            .trim()
-        );
+  return null;
+}
+       
+        console.timeEnd(`${job.title}-${job.company}`);
 
 
         return {
