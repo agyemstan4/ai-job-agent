@@ -28,6 +28,13 @@ export default function Home() {
     "C# Developer",
   ];
 
+  const getMatchLabel = (score:number) => {
+  if (score >= 90) return "Excellent Match";
+  if (score >= 75) return "Strong Match";
+  if (score >= 60) return "Potential Match";
+  return "Weak Match";
+};
+
   const toggleRole = (role: string) => {
     setSelectedRoles((prev) =>
       prev.includes(role)
@@ -536,14 +543,8 @@ console.log("AFTER SET:", matchResults.matches);
 
 
                 <p className="mt-2 font-semibold">
-  {Number(job.matchScore) >= 90
-    ? "🟢 Excellent Match"
-    : Number(job.matchScore) >= 75
-    ? "🟢 Strong Match"
-    : Number(job.matchScore) >= 60
-    ? "🟡 Moderate Match"
-    : "🔴 Weak Match"}
-</p>
+               🟢 {getMatchLabel(Number(job.matchScore))}
+               </p>
 
                 <p className="mt-3 text-sm text-gray-700 leading-relaxed">
                   {job.reason}
