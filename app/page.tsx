@@ -185,7 +185,7 @@ console.log("AFTER SET:", matchResults.matches);
 
   return (
     <main className="min-h-screen bg-gray-100 p-8">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-6xl">
 
         <h1 className="text-4xl font-bold text-gray-900">
           AI Job Agent
@@ -371,107 +371,48 @@ console.log("AFTER SET:", matchResults.matches);
 
 </ul>
 
-    {/* JOB MATCHES */}
+ {/* JOB MATCHES */}
 
-    {matches && matches.length > 0 && (
+{matches && matches.length > 0 && (
 
-      <div className="mt-10">
+  <div className="mt-10">
 
-        <h2 className="text-3xl font-bold">
-          🎯 Best Job Matches
-        </h2>
+    <h2 className="text-3xl font-bold">
+      🎯 Best Job Matches
+    </h2>
 
-        <p className="mt-2 text-gray-600">
-          Ranked by AI based on your CV.
-        </p>
-
-
-        <div className="mt-6 space-y-6">
+    <p className="mt-2 text-gray-600">
+      Ranked by AI based on your CV.
+    </p>
 
 
-          {matches.map((job:any,index:number)=>(
+    <div className="mt-6 space-y-6">
 
-            <div
-              key={index}
-              className="rounded-2xl
-    border
-    border-gray-200
-    bg-white
-    p-8
-    shadow-sm
-    transition
-    duration-300
-    hover:-translate-y-1
-    hover:shadow-xl
-"
-            >
+      {matches.map((job:any,index:number)=>(
 
+        <div
+          key={index}
+          className="
+          rounded-2xl
+          border
+          border-gray-200
+          bg-white
+          p-8
+          shadow-sm
+          "
+        >
 
-              <div className="flex items-start justify-between">
+          <div className="flex justify-between">
 
-  <div>
+            <div>
 
-    <h3 className="text-2xl font-bold text-gray-900">
-  {job.title}
-</h3>
+              <h3 className="text-2xl font-bold">
+                {job.title}
+              </h3>
 
-
-<p className="text-gray-600">
-{job.company}
-</p>
-</div>
-
-
-  <div>
-
-    <span
-      className={`
-        rounded-full
-        px-4
-        py-2
-        text-lg
-        font-bold
-        ${
-  Number(job.matchScore) >= 75
-? "bg-green-100 text-green-700"
-: Number(job.matchScore) >= 60
-? "bg-yellow-100 text-yellow-700"
-: "bg-red-100 text-red-700"
-}
-      `}
-    >
-    {Number(job.matchScore)}% Match
-    </span>
-
-  </div>
-
-</div>
-
-
-<div className="mt-4">
-
-  <div className="flex justify-between text-sm text-gray-600">
-    <span>AI Compatibility</span>
-    <span>{job.matchScore}%</span>
-  </div>
-
-  <div className="mt-2 h-3 rounded-full bg-gray-200">
-
-    <div
-      className="h-3 rounded-full bg-blue-600"
-      style={{
-  width: `${Number(job.matchScore)}%`
-}}
-    />
-
-  </div>
-
-</div>
-
-<p className="mt-1 text-sm text-gray-500">
-  📍 {job.location}
-</p>
-
+              <p className="text-gray-600">
+                {job.company} • 📍 {job.location}
+              </p>
               {job.salaryMin && job.salaryMax && (
   <p className="mt-2 text-green-600 font-semibold">
     💷 £{job.salaryMin.toLocaleString()} - £{job.salaryMax.toLocaleString()}
@@ -480,7 +421,7 @@ console.log("AFTER SET:", matchResults.matches);
 
 {job.contractType && (
   <p className="text-sm text-gray-600">
-    📄 {job.contractType}
+    📄 {job.contractType.charAt(0).toUpperCase() + job.contractType.slice(1)}
   </p>
 )}
 
@@ -490,165 +431,134 @@ console.log("AFTER SET:", matchResults.matches);
   </p>
 )}
 
-              {job.breakdown && (
-  <div className="mt-6 grid grid-cols-2 gap-4">
-
-    <div className="rounded-xl bg-blue-50 p-4">
-      <p className="text-sm text-gray-600">
-        Technical Skills
-      </p>
-      <p className="mt-1 text-2xl font-bold text-blue-700">
-        {job.breakdown.technicalSkills}%
-      </p>
-    </div>
+            </div>
 
 
-    <div className="rounded-xl bg-green-50 p-4">
-      <p className="text-sm text-gray-600">
-        Experience
-      </p>
-      <p className="mt-1 text-2xl font-bold text-green-700">
-        {job.breakdown.experienceLevel}%
-      </p>
-    </div>
+            <div className="rounded-xl bg-blue-100 px-5 py-3 text-center">
 
+              <p className="text-3xl font-bold text-blue-700">
+                {job.matchScore}%
+              </p>
 
-    <div className="rounded-xl bg-purple-50 p-4">
-      <p className="text-sm text-gray-600">
-        Projects
-      </p>
-      <p className="mt-1 text-2xl font-bold text-purple-700">
-        {job.breakdown.projects}%
-      </p>
-    </div>
-
-
-    <div className="rounded-xl bg-orange-50 p-4">
-      <p className="text-sm text-gray-600">
-        Growth Potential
-      </p>
-      <p className="mt-1 text-2xl font-bold text-orange-700">
-        {job.breakdown.growthPotential}%
-      </p>
-    </div>
-
-  </div>
-)}
-
-              <div className="mt-5 rounded-xl bg-gray-50 p-5">
-
-                <h4 className="text-lg font-semibold">
-                  🤖 AI Recommendation
-                </h4>
-
-
-                <p className="mt-2 font-semibold">
-               🟢 {getMatchLabel(Number(job.matchScore))}
-               </p>
-
-                <p className="mt-3 text-sm text-gray-700 leading-relaxed">
-                  {job.reason}
-                </p>
-
-
-                <div className="mt-4">
-
-                  <p className="text-sm font-semibold">
-                    Why you stand out:
-                  </p>
-
-<ul className="mt-2 space-y-1 text-sm text-gray-700">
-
-  {job.strengths?.map((strength:string)=>(
-    <li key={strength}>
-      ✓ {strength}
-    </li>
-  ))}
-
-</ul>
-                 
-
-                </div>
-
-              </div>
-
-              
-
-
-              <h4 className="mt-5 font-semibold">
-                Missing Skills
-              </h4>
-
-
-              {job.missingSkills?.length > 0 ? (
-
-                <div className="mt-3 flex flex-wrap gap-2">
-
-{job.missingSkills.map((skill:string)=>(
-  <span
-    key={skill}
-    className="
-      rounded-full
-      bg-red-100
-      px-3
-      py-1
-      text-sm
-      text-red-700
-    "
-  >
-    {skill}
-  </span>
-))}
-
-</div>
-
-              ) : (
-
-                <p className="mt-2 text-green-600">
-                  No major skill gaps detected.
-                </p>
-
-              )}
-
-
-              <a
-                href={job.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="
-mt-6
-inline-flex
-items-center
-rounded-lg
-bg-blue-600
-px-6
-py-3
-font-semibold
-text-white
-transition
-hover:bg-blue-700
-hover:scale-105
-"
-              >
-                Apply Now →
-              </a>
-
+              <p className="text-sm">
+                AI Match
+              </p>
 
             </div>
 
-          ))}
+          </div>
+
+
+          <div className="mt-5">
+
+            <h4 className="font-semibold">
+              🤖 AI Recommendation
+            </h4>
+
+            <p className="mt-2 text-gray-700">
+              {job.reason}
+            </p>
+
+          </div>
+
+
+          <div className="mt-5">
+
+            <h4 className="font-semibold">
+              Why you stand out:
+            </h4>
+
+
+            <div className="mt-3 space-y-2">
+
+              {job.strengths?.map((strength:string,index:number)=>(
+
+                <div
+                  key={index}
+                  className="
+                  rounded-lg
+                  bg-green-50
+                  px-4
+                  py-2
+                  text-green-700
+                  "
+                >
+                  ✓ {strength}
+                </div>
+
+              ))}
+
+            </div>
+
+          </div>
+
+
+
+          <div className="mt-5">
+
+            <h4 className="font-semibold">
+              Missing Skills
+            </h4>
+
+
+            <div className="mt-3 flex flex-wrap gap-2">
+
+              {job.missingSkills?.map((skill:string)=>(
+
+                <span
+                  key={skill}
+                  className="
+                  rounded-full
+                  bg-red-100
+                  px-3
+                  py-1
+                  text-red-700
+                  "
+                >
+                  {skill}
+                </span>
+
+              ))}
+
+            </div>
+
+          </div>
+
+
+
+          <a
+            href={job.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="
+            mt-6
+            inline-flex
+            rounded-lg
+            bg-blue-600
+            px-6
+            py-3
+            font-semibold
+            text-white
+            "
+          >
+            Apply Now →
+          </a>
 
 
         </div>
 
-      </div>
+      ))}
 
-    )}
-
+    </div>
 
   </div>
-)}    
- </div>
+
+)}
+</div>
+)}
+ 
+</div>
+
 </main>
 );
 }

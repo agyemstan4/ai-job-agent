@@ -133,7 +133,7 @@ Do not stop before completing the JSON.
   stream: false,
   format: "json",
   options: {
-    num_predict: 400,
+    num_predict: 500,
     temperature: 0.2,
     num_ctx: 2048
   }
