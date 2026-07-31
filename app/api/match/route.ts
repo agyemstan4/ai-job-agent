@@ -15,26 +15,64 @@ console.log("🔥 MATCH API STARTED");
   projects: candidate.projects,
 };
 
-const keywords = [
-  ...candidate.technicalSkills,
-  candidate.experienceLevel,
+const roleKeywords = [
   "software engineer",
+  "software developer",
   "developer",
+  "engineer",
+  "frontend",
+  "backend",
+  "full stack",
+  "full-stack",
+  "android",
+  "mobile",
+  "graduate",
+  "junior",
+  "web developer",
 ];
 
+const skillKeywords = (candidate.technicalSkills || []).map(
+  (skill: string) => skill.toLowerCase()
+);
+
 const filteredJobs = jobs.filter((job: any) => {
+
   const text = `
     ${job.title}
     ${job.description}
   `.toLowerCase();
 
-  return keywords.some((keyword: string) =>
-    text.includes(keyword.toLowerCase())
-  );
+
+ const hasDeveloperRole = roleKeywords.some(
+  (keyword: string) => text.includes(keyword)
+);
+
+
+const hasRelevantSkill = skillKeywords.some(
+  (skill: string) => text.includes(skill)
+);
+
+
+ return hasDeveloperRole && hasRelevantSkill;
+
 });
 
+const uniqueFilteredJobs = Array.from(
+  new Map<string, any>(
+    filteredJobs.map((job: any) => [
+      `${job.title}-${job.company}`,
+      job,
+    ])
+  ).values()
+);
 
-const selectedJobs = filteredJobs.slice(0, 3);
+const selectedJobs = uniqueFilteredJobs.slice(0, 3);
+
+if (selectedJobs.length === 0) {
+  return NextResponse.json({
+    matches: [],
+  });
+}
 
 console.log(
   "Filtered jobs:",
@@ -62,8 +100,7 @@ ${job.title}
 Company:
 ${job.company}
 
-Description:
-${job.description.slice(0, 300)}
+${job.description.slice(0, 250)}
 
 `).join("\n")}
 
@@ -74,18 +111,26 @@ Rules:
 - No markdown.
 - Score each job separately.
 - Use integer scores only.
-- Base scores only on candidate profile and job description.
-- If a required skill is missing, include it in missingSkills.
+- Base scores only on the candidate profile and job description.
+- Prioritise technical skill overlap, projects, and software engineering ability.
+- Do not penalise the candidate for lacking company-specific industry experience.
+- Do not invent missing skills unless they are clearly required in the job description.
+- Consider transferable experience from projects, university work, and personal applications.
+- Consider junior and graduate candidates with limited professional experience fairly.
+- A strong portfolio project can count as relevant practical experience.
+- Kotlin, Java, JavaScript, Firebase, APIs, Android development, and full-stack projects should be recognised where relevant.
+- MissingSkills should only contain important technical requirements that are genuinely absent.
 - Reason must be one sentence under 30 words.
-- Strengths should contain 2-3 specific reasons.
-- All breakdown scores must be between 0 and 100.
-- Consider junior and graduate expectations.
+- strengths must always contain exactly 2 short strings.
+- breakdown must contain ONLY numbers.
+- Never write explanations inside breakdown.
+- growthPotential must be a number between 0 and 100.
 
 Return ONLY JSON.
 
-You are scoring 3 jobs.
+You are scoring multiple jobs.
 
-You MUST include all 3 results inside the "results" array.
+Return exactly one result for each job provided.
 
 Never return a single result.
 
@@ -94,36 +139,10 @@ Return JSON in this exact format:
 {
  "results": [
   {
-   "jobNumber": 1,
+   "jobNumber":1,
    "matchScore":0,
    "reason":"",
-   "strengths":[],
-   "breakdown":{
-    "technicalSkills":0,
-    "experienceLevel":0,
-    "projects":0,
-    "growthPotential":0
-   },
-   "missingSkills":[]
-  },
-  {
-   "jobNumber": 2,
-   "matchScore":0,
-   "reason":"",
-   "strengths":[],
-   "breakdown":{
-    "technicalSkills":0,
-    "experienceLevel":0,
-    "projects":0,
-    "growthPotential":0
-   },
-   "missingSkills":[]
-  },
-  {
-   "jobNumber": 3,
-   "matchScore":0,
-   "reason":"",
-   "strengths":[],
+   "strengths":["",""],
    "breakdown":{
     "technicalSkills":0,
     "experienceLevel":0,
@@ -134,6 +153,9 @@ Return JSON in this exact format:
   }
  ]
 }
+
+Include one result for every job provided.
+
 `;
 
 
@@ -162,8 +184,8 @@ const response = await fetch(
       format: "json",
       options: {
         temperature: 0,
-        num_predict: 700,
-        num_ctx: 2048,
+        num_predict: 450,
+        num_ctx: 3072,
       },
     }),
   }
@@ -195,7 +217,9 @@ try {
 console.log("RAW OLLAMA RESPONSE:");
 console.log(JSON.stringify(parsed, null, 2));
 
-scoredJobs = parsed.results || [];
+scoredJobs = Array.isArray(parsed.results)
+  ? parsed.results
+  : [];
 
 console.log("AI RETURN:", scoredJobs);
 console.log("AI RETURN TYPE:", typeof scoredJobs);
@@ -215,7 +239,10 @@ console.log("AI RETURN TYPE:", typeof scoredJobs);
 const matches = scoredJobs
   .map((result: any) => {
 
+    
     const job = selectedJobs[result.jobNumber - 1];
+
+if (!job) return null;
 
     return {
       title: job.title,
@@ -240,10 +267,12 @@ const matches = scoredJobs
     };
 
   })
+  .filter(Boolean)
   .sort(
     (a: any, b: any) =>
       b.matchScore - a.matchScore
   );
+   
    
 
     console.log("Finished scoring jobs.");
