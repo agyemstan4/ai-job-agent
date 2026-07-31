@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
-  console.log("🔥 MATCH API STARTED");
+  const totalStart = Date.now();
+
+console.log("🔥 MATCH API STARTED");
 
   try {
     const { candidate, jobs } = await req.json();
@@ -13,203 +15,233 @@ export async function POST(req: Request) {
   projects: candidate.projects,
 };
 
-
-    const jobPromises = jobs.slice(0, 3).map(async (job: any) => {
-      console.log("Scoring:", job.title);
+const selectedJobs = jobs.slice(0, 3);
 
 console.log(
-  `${job.title} description length:`,
-  job.description.length
+  "Batch scoring jobs:",
+  selectedJobs.map((job: any) => job.title)
 );
 
-      console.time(`${job.title}-${job.company}`);
 
-console.log(
-  "Candidate summary length:",
-  JSON.stringify(candidateSummary).length
-);
+const prompt = `
 
-console.log(
-  "Original candidate length:",
-  JSON.stringify(candidate).length
-);
-      const prompt = `
-      
 You are an expert job matching AI.
 
-Compare the candidate against the job description.
+Compare the candidate against multiple jobs.
 
 Candidate:
 ${JSON.stringify(candidateSummary)}
 
+Jobs:
 
-Job Title:
+${selectedJobs.map((job: any, index: number) => `
+
+JOB NUMBER: ${index + 1}
+
+Title:
 ${job.title}
 
 Company:
 ${job.company}
 
-Job Description:
+Description:
 ${job.description.slice(0, 300)}
 
-Important:
-- Write the reason in professional English.
-- Use correct grammar and punctuation.
-- If referring to the candidate, use "Stanley's".
-- Never use "Stanley'n".
+`).join("\n")}
+
 
 Rules:
+
 - Output valid JSON only.
 - No markdown.
-- No explanations outside the JSON.
+- Score each job separately.
 - Use integer scores only.
-- Base the score only on the candidate profile and job description.
-- If a required skill is missing, include it in "missingSkills".
-- Calculate matchScore as the average of the four breakdown scores.
-- The reason field MUST be a single sentence under 30 words.
-- The strengths array should contain 2-3 specific reasons why the candidate fits this role.
+- Base scores only on candidate profile and job description.
+- If a required skill is missing, include it in missingSkills.
+- Reason must be one sentence under 30 words.
+- Strengths should contain 2-3 specific reasons.
 - All breakdown scores must be between 0 and 100.
-- Do not inflate scores.
-- Missing core requirements should reduce scores.
 - Consider junior and graduate expectations.
+
+Return ONLY JSON.
+
+You are scoring 3 jobs.
+
+You MUST include all 3 results inside the "results" array.
+
+Never return a single result.
 
 Return JSON in this exact format:
 
 {
-  "matchScore": 0,
-  "reason": "",
-  "strengths": [],
-  "breakdown": {
-    "technicalSkills": 0,
-    "experienceLevel": 0,
-    "projects": 0,
-    "growthPotential": 0
+ "results": [
+  {
+   "jobNumber": 1,
+   "matchScore":0,
+   "reason":"",
+   "strengths":[],
+   "breakdown":{
+    "technicalSkills":0,
+    "experienceLevel":0,
+    "projects":0,
+    "growthPotential":0
+   },
+   "missingSkills":[]
   },
-  "missingSkills": []
+  {
+   "jobNumber": 2,
+   "matchScore":0,
+   "reason":"",
+   "strengths":[],
+   "breakdown":{
+    "technicalSkills":0,
+    "experienceLevel":0,
+    "projects":0,
+    "growthPotential":0
+   },
+   "missingSkills":[]
+  },
+  {
+   "jobNumber": 3,
+   "matchScore":0,
+   "reason":"",
+   "strengths":[],
+   "breakdown":{
+    "technicalSkills":0,
+    "experienceLevel":0,
+    "projects":0,
+    "growthPotential":0
+   },
+   "missingSkills":[]
+  }
+ ]
 }
 `;
 
+
 console.log(
-  `${job.title} prompt length:`,
+  "Batch prompt length:",
   prompt.length
 );
-    const controller = new AbortController();
-
-      const timeout = setTimeout(() => {
-        controller.abort();
-      }, 300000);
 
 
-      try {
+const ollamaStart = Date.now();
 
-        const response = await fetch(
-          "http://localhost:11434/api/generate",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            signal: controller.signal,
-            body: JSON.stringify({
-              model: "phi3.5:latest",
-              prompt,
-              stream: false,
-              format: "json",
-              options: {
-                temperature: 0,
-                num_predict:180,
-                num_ctx: 1536,
-              },
-            }),
-          }
-        );
+console.log("🤖 Calling Ollama batch...");
 
 
-        clearTimeout(timeout);
+const response = await fetch(
+  "http://localhost:11434/api/generate",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "phi3.5:latest",
+      prompt,
+      stream: false,
+      format: "json",
+      options: {
+        temperature: 0,
+        num_predict: 700,
+        num_ctx: 2048,
+      },
+    }),
+  }
+);
 
 
-        if (!response.ok) {
-          console.log("Ollama failed for", job.title);
-          return null;
-        }
+console.log(
+  `✅ Batch Ollama finished in ${(
+    (Date.now() - ollamaStart) /
+    1000
+  ).toFixed(2)}s`
+);
+
 
 const data = await response.json();
 
-let result;
+
+let scoredJobs;
 
 try {
-  result = JSON.parse(
-    data.response
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim()
-  );
+
+  const parsed = JSON.parse(
+  data.response
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim()
+);
+
+console.log("RAW OLLAMA RESPONSE:");
+console.log(JSON.stringify(parsed, null, 2));
+
+scoredJobs = parsed.results || [];
+
+console.log("AI RETURN:", scoredJobs);
+console.log("AI RETURN TYPE:", typeof scoredJobs);
+
 } catch (error) {
-  console.error(`❌ Invalid JSON from Ollama for ${job.title}:`);
+
+  console.error("❌ Invalid batch JSON:");
   console.log(data.response);
 
-  return null;
+  return NextResponse.json({
+    error: "AI response invalid",
+  });
+
 }
-       
-        console.timeEnd(`${job.title}-${job.company}`);
 
 
-        return {
-          title: job.title,
-          company: job.company,
-          location: job.location,
-          url: job.url,
+const matches = scoredJobs
+  .map((result: any) => {
 
-          salaryMin: job.salaryMin,
-          salaryMax: job.salaryMax,
-          contractType: job.contractType,
-          created: job.created,
+    const job = selectedJobs[result.jobNumber - 1];
 
-          matchScore: result.matchScore,
-          breakdown: result.breakdown,
-          reason: result.reason,
-          strengths: result.strengths,
+    return {
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      url: job.url,
 
-          missingSkills:
-            result.missingSkills?.filter(
-              (skill: string) => skill.trim() !== ""
-            ) || [],
-        };
+      salaryMin: job.salaryMin,
+      salaryMax: job.salaryMax,
+      contractType: job.contractType,
+      created: job.created,
 
+      matchScore: result.matchScore,
+      breakdown: result.breakdown,
+      reason: result.reason,
+      strengths: result.strengths,
 
-      } catch (error) {
+      missingSkills:
+        result.missingSkills?.filter(
+          (skill: string) => skill.trim() !== ""
+        ) || [],
+    };
 
-        console.log(
-          "FAILED SCORING:",
-          job.title,
-          error
-        );
-
-        return null;
-      }
-
-    });
-
-
-    const results = await Promise.all(jobPromises);
-
-
-    const matches = results
-      .filter((job) => job !== null)
-      .sort(
-        (a, b) =>
-          b.matchScore - a.matchScore
-      );
-
+  })
+  .sort(
+    (a: any, b: any) =>
+      b.matchScore - a.matchScore
+  );
+   
 
     console.log("Finished scoring jobs.");
     console.log("FINAL MATCHES:", matches);
 
+console.log(
+  `🏁 MATCH API TOTAL: ${(
+    (Date.now() - totalStart) /
+    1000
+  ).toFixed(2)}s`
+);
 
-    return NextResponse.json({
-      matches,
-    });
-
+return NextResponse.json({
+  matches,
+});
+    
 
   } catch (error) {
 
