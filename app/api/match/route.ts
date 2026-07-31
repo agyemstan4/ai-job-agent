@@ -15,13 +15,31 @@ console.log("🔥 MATCH API STARTED");
   projects: candidate.projects,
 };
 
-const selectedJobs = jobs.slice(0, 3);
+const keywords = [
+  ...candidate.technicalSkills,
+  candidate.experienceLevel,
+  "software engineer",
+  "developer",
+];
+
+const filteredJobs = jobs.filter((job: any) => {
+  const text = `
+    ${job.title}
+    ${job.description}
+  `.toLowerCase();
+
+  return keywords.some((keyword: string) =>
+    text.includes(keyword.toLowerCase())
+  );
+});
+
+
+const selectedJobs = filteredJobs.slice(0, 3);
 
 console.log(
-  "Batch scoring jobs:",
+  "Filtered jobs:",
   selectedJobs.map((job: any) => job.title)
 );
-
 
 const prompt = `
 
