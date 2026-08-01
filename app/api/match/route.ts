@@ -35,6 +35,16 @@ const skillKeywords = (candidate.technicalSkills || []).map(
   (skill: string) => skill.toLowerCase()
 );
 
+const seniorKeywords = [
+  "senior",
+  "lead",
+  "principal",
+  "staff",
+  "architect",
+  "manager",
+  "director",
+];
+
 const filteredJobs = jobs.filter((job: any) => {
 
   const text = `
@@ -52,8 +62,16 @@ const hasRelevantSkill = skillKeywords.some(
   (skill: string) => text.includes(skill)
 );
 
+  const isSenior = seniorKeywords.some(
+    (keyword: string) => text.includes(keyword)
+  );
 
- return hasDeveloperRole && hasRelevantSkill;
+
+  return (
+    hasDeveloperRole &&
+    hasRelevantSkill &&
+    !isSenior
+  );
 
 });
 
