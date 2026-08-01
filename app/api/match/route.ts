@@ -1,6 +1,91 @@
 import { NextResponse } from "next/server";
 
+function validateStrengths(
+  strengths: string[],
+  candidate: any
+) {
+  const candidateText = JSON.stringify(candidate)
+    .toLowerCase();
+
+  return strengths.filter((skill:string) => {
+
+    const parts = skill
+      .toLowerCase()
+      .split("/")
+      .map(part => part.trim());
+
+    return parts.some(part =>
+      candidateText.includes(part)
+    );
+
+  });
+}
+
+function validateReason(
+  reason:string,
+  candidate:any
+){
+
+ const candidateText =
+ JSON.stringify(candidate)
+ .toLowerCase();
+
+
+ const forbidden = [
+   "python",
+   "react",
+   "docker",
+   "kubernetes",
+   "ci/cd",
+   "aws"
+ ];
+
+
+ const containsUnknown =
+ forbidden.some(skill =>
+   reason
+   .toLowerCase()
+   .includes(skill)
+   &&
+   !candidateText.includes(skill)
+ );
+
+
+ if(containsUnknown){
+   return "Match based on transferable technical skills and project experience.";
+ }
+
+
+ return reason;
+
+}
+
+function validateMissingSkills(
+  missingSkills: any[],
+  candidate: any
+) {
+  const candidateText = JSON.stringify(candidate)
+    .toLowerCase();
+
+  return missingSkills.filter((item:any)=>{
+
+    const skill =
+      typeof item === "string"
+        ? item
+        : item.skill;
+
+    return skill &&
+      !candidateText.includes(
+        skill.toLowerCase()
+      );
+
+  });
+}
+
+
 export async function POST(req: Request) {
+
+
   const totalStart = Date.now();
 
 console.log("🔥 MATCH API STARTED");
@@ -93,7 +178,43 @@ const uniqueFilteredJobs = Array.from(
   ).values()
 );
 
-const selectedJobs = uniqueFilteredJobs.slice(0, 3);
+const rankedJobs = [...uniqueFilteredJobs].sort(
+  (a:any,b:any)=>{
+
+    const scoreJob = (job:any)=>{
+
+      const text =
+      `${job.title} ${job.description}`
+      .toLowerCase();
+
+      let score = 0;
+
+      skillKeywords.forEach(
+        (skill:string)=>{
+          if(text.includes(skill)){
+            score += 10;
+          }
+        }
+      );
+
+      if(text.includes("junior"))
+        score += 5;
+
+      if(text.includes("graduate"))
+        score += 5;
+
+      return score;
+    }
+
+    return scoreJob(b) - scoreJob(a);
+
+  }
+);
+
+
+const selectedJobs = rankedJobs.slice(0,5);
+
+
 
 if (selectedJobs.length === 0) {
   return NextResponse.json({
@@ -127,7 +248,7 @@ ${job.title}
 Company:
 ${job.company}
 
-${job.description.slice(0, 600)}
+${job.description.slice(0, 450)}
 
 `).join("\n")}
 
@@ -135,53 +256,51 @@ ${job.description.slice(0, 600)}
 Rules:
 
 - Output valid JSON only.
-- No markdown.
 - Score each job separately.
 - Use integer scores only.
-- Base scores on technical skills, projects, education, and practical engineering experience.
-- Treat university projects, dissertation projects, personal projects, and portfolio applications as valid engineering experience.
-- Do not penalise junior or graduate candidates for limited commercial employment history.
+- Base scores on technical skills, projects, education, and practical engineering ability.
+- Treat university projects, dissertation projects, and portfolio applications as valid experience.
+- Do not penalise junior/graduate candidates for limited commercial employment.
+- ExperienceLevel should reflect practical engineering ability, not only paid jobs.
+- Graduate candidates with software projects should have experienceLevel of at least 50.
+- Projects using job technologies should score 70+.
+- Junior/graduate candidates must have growthPotential of at least 40.
+- GrowthPotential is based on learning ability, projects, education, and technical foundation.
+
+Technology rules:
+
 - Prioritise direct technology matches.
-- Recognise Kotlin, Java, JavaScript, Firebase, APIs, Android development, and full-stack projects when relevant.
-- If a candidate has built a project using a technology, consider that practical experience.
-- Never assign projects score 0 when the candidate has relevant software projects.
-- Never claim a candidate lacks a technology that appears in their candidate profile.
+- If Kotlin appears in candidate technicalSkills or projects, treat it as relevant experience for JVM roles.
+- If Java appears in candidate technicalSkills or projects, never state the candidate lacks Java.
+- Never claim missing skills that already exist in candidate technicalSkills or projects.
+- Never invent candidate strengths from job requirements.
+- Do not describe job-required technologies as candidate experience unless they appear in the candidate profile.
+- Every strength must exactly match a technology or engineering capability present in the candidate profile.
+- Never use job requirements as strengths.
+- Evaluate the candidate only from the provided candidate profile.
 
 MissingSkills rules:
 
-- MissingSkills must only contain real technical technologies.
-- Allowed examples: React, Flutter, Docker, AWS, PostgreSQL, Swift, Kubernetes.
-- Never include experience, knowledge, skills in general, responsibilities, or concepts.
-- Never include phrases like:
-  "AI integration"
-  "backend experience"
-  "mobile experience"
-  "full stack knowledge"
-- Do not include technologies already found in candidate technicalSkills or projects.
-- Each item must contain:
-  skill
-  importance
-- importance must be only:
-  high
-  medium
-  low
-- If no technical gap exists, return [].
+- Only include real technical technologies.
+- Never include concepts, responsibilities, or experience gaps.
+- Do not include a missing skill if it already appears anywhere in the candidate technicalSkills or project skills.
+- Each item must be:
+{
+ "skill":"",
+ "importance":"high|medium|low"
+}
+- Return [] if no technical gaps exist.
 
-General output rules:
+Output rules:
+
 - Reason must be one sentence under 30 words.
-- strengths must contain up to 2 short strings.
-- If only one genuine strength exists, return one.
-- Never return empty strings.
-- breakdown must contain ONLY these four numeric keys:
-  technicalSkills,
-  experienceLevel,
-  projects,
-  growthPotential.
-- All breakdown values must be integers between 0 and 100.
-- Never add explanations, labels, strings, arrays, or extra keys inside breakdown.
-- Never place breakdown values outside the breakdown object.
-- Complete the entire JSON object before stopping.
-- Never stop generating while JSON is incomplete.
+- strengths must contain 1-2 real candidate strengths.
+- breakdown must only contain:
+technicalSkills,
+experienceLevel,
+projects,
+growthPotential
+- Values must be integers between 0-100.
 
 Return ONLY JSON.
 
@@ -199,7 +318,7 @@ Return JSON in this exact format:
    "jobNumber":1,
    "matchScore":0,
    "reason":"",
-   "strengths":["",""],
+   "strengths":[""],
    "breakdown":{
     "technicalSkills":0,
     "experienceLevel":0,
@@ -212,20 +331,7 @@ Return JSON in this exact format:
    "jobNumber":2,
    "matchScore":0,
    "reason":"",
-   "strengths":["",""],
-   "breakdown":{
-    "technicalSkills":0,
-    "experienceLevel":0,
-    "projects":0,
-    "growthPotential":0
-   },
-   "missingSkills":[]
-  },
-  {
-   "jobNumber":3,
-   "matchScore":0,
-   "reason":"",
-   "strengths":["",""],
+   "strengths":[""],
    "breakdown":{
     "technicalSkills":0,
     "experienceLevel":0,
@@ -267,8 +373,8 @@ const response = await fetch(
       format: "json",
       options: {
         temperature: 0,
-        num_predict: 350,
-        num_ctx: 2048,
+        num_predict: 650,
+        num_ctx: 4096,
       },
     }),
   }
@@ -349,13 +455,13 @@ const matches = uniqueResults
     )
   ),
 
-  growthPotential: Math.min(
-    100,
-    Math.max(
-      0,
-      Number(result.breakdown?.growthPotential) || 0
-    )
-  ),
+  growthPotential: Math.max(
+40,
+Math.min(
+100,
+Number(result.breakdown?.growthPotential) || 40
+)
+)
 };
 
     const job = selectedJobs[result.jobNumber - 1];
@@ -374,19 +480,22 @@ if (!job) return null;
       created: job.created,
 
       matchScore: Math.min(
-  89,
+  100,
   Number(result.matchScore) || 0
 ),
       breakdown: cleanBreakdown,
-      reason: result.reason,
+      reason: validateReason(
+  result.reason,
+  candidate
+),
       strengths:
-Array.isArray(result.strengths) &&
-result.strengths.filter(Boolean).length > 0
-? result.strengths.filter(Boolean).slice(0,2)
-: [
-    "Software engineering projects",
-    "Relevant technical skills"
-  ],
+Array.isArray(result.strengths)
+? validateStrengths(
+    result.strengths,
+    candidate
+  )
+  .slice(0,2)
+: [],
 
    missingSkills:
   Array.isArray(result.missingSkills)
@@ -409,7 +518,6 @@ result.strengths.filter(Boolean).length > 0
       "knowledge",
       "years",
       "integration",
-      "development",
       "required",
       "programming",
       "ability",
@@ -422,14 +530,20 @@ result.strengths.filter(Boolean).length > 0
         item.skill.toLowerCase().includes(word)
     )
 )
-        .map((item:any)=>({
-          skill:item.skill,
-          importance:
-            ["high","medium","low"].includes(item.importance)
-              ? item.importance
-              : "medium"
-        }))
-    : [],
+    .map((item:any)=>({
+  skill:item.skill,
+  importance:
+    ["high","medium","low"].includes(item.importance)
+      ? item.importance
+      : "medium"
+}))
+.filter((item:any)=>
+  validateMissingSkills(
+    [item],
+    candidate
+  ).length > 0
+)
+: [],    
     };
 
   })
