@@ -12,6 +12,8 @@ export default function Home() {
   const [matches, setMatches] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
+console.log("RENDER MATCHES:", matches);
+
 
   const [selectedRoles, setSelectedRoles] = useState<string[]>([
     "Junior Software Engineer",
@@ -28,8 +30,9 @@ export default function Home() {
     "C# Developer",
   ];
 
-  const getMatchLabel = (score:number) => {
-  if (score >= 90) return "Excellent Match";
+  const getMatchLabel = (score:number | undefined) => {
+  if (!score) return "No Score";
+if (score >= 90) return "Excellent Match";
   if (score >= 75) return "Strong Match";
   if (score >= 60) return "Potential Match";
   return "Weak Match";
@@ -283,33 +286,31 @@ console.log("AFTER SET:", matchResults.matches);
     </h2>
 
     <h3 className="mt-6 text-xl font-semibold">
-      Match Score
-    </h3>
+  Candidate Match Score
+</h3>
 
-    <p className="mt-2 text-3xl font-bold">
-      {analysis.matchScore}%
-    </p>
+<p className="mt-2 text-3xl font-bold">
+  {analysis.matchScore ?? "N/A"}%
+</p>
 
-   <p className="mt-2 font-semibold">
+<p className="mt-2 font-semibold">
   {analysis.matchScore >= 90
     ? "🟢 Excellent Match"
     : analysis.matchScore >= 75
     ? "🟢 Strong Match"
     : analysis.matchScore >= 60
-    ? "🟡 Moderate Match"
+    ? "🟡 Potential Match"
     : "🔴 Weak Match"}
 </p>
 
-
-    <div className="mt-3 h-3 w-full rounded-full bg-gray-200">
-      <div
-        className="h-3 rounded-full bg-blue-600"
-        style={{
-          width: `${analysis.matchScore}%`
-        }}
-      />
-    </div>
-
+<div className="mt-3 h-3 w-full rounded-full bg-gray-200">
+  <div
+    className="h-3 rounded-full bg-blue-600"
+    style={{
+      width: `${analysis.matchScore || 0}%`
+    }}
+  />
+</div>
 
     <h3 className="mt-6 text-xl font-semibold">
       Candidate Summary
@@ -335,9 +336,9 @@ console.log("AFTER SET:", matchResults.matches);
 
     <div className="mt-3 flex flex-wrap gap-2">
 
-      {analysis.matchingSkills?.map((skill:string)=>(
-        <span
-          key={skill}
+      {analysis.matchingSkills?.map((skill:any,index:number)=>(
+  <span
+    key={index}
           className="rounded-full bg-blue-100 px-3 py-1 text-blue-700"
         >
           {skill}
@@ -357,7 +358,10 @@ console.log("AFTER SET:", matchResults.matches);
 
     analysis.missingSkills.map((skill: any, index: number) => (
   <li key={index}>
-    {typeof skill === "string" ? skill : skill.skillName}
+    {typeof skill === "string" 
+      ? skill 
+      : `${skill.skill} (${skill.importance})`
+    }
   </li>
 ))
 
@@ -437,12 +441,12 @@ console.log("AFTER SET:", matchResults.matches);
             <div className="rounded-xl bg-blue-100 px-5 py-3 text-center">
 
               <p className="text-3xl font-bold text-blue-700">
-                {job.matchScore}%
-              </p>
+  {String(job.matchScore)}%
+</p>
 
               <p className="text-sm">
-                AI Match
-              </p>
+  {getMatchLabel(job.matchScore)}
+</p>
 
             </div>
 
@@ -471,7 +475,7 @@ console.log("AFTER SET:", matchResults.matches);
 
             <div className="mt-3 space-y-2">
 
-              {job.strengths?.map((strength:string,index:number)=>(
+              {job.strengths?.map((strength:any,index:number)=>(
 
                 <div
                   key={index}
@@ -503,22 +507,25 @@ console.log("AFTER SET:", matchResults.matches);
 
             <div className="mt-3 flex flex-wrap gap-2">
 
-              {job.missingSkills?.map((skill:string)=>(
+            {job.missingSkills?.map((skill:any,index:number)=>(
 
-                <span
-                  key={skill}
-                  className="
-                  rounded-full
-                  bg-red-100
-                  px-3
-                  py-1
-                  text-red-700
-                  "
-                >
-                  {skill}
-                </span>
+<span
+  key={index}
+  className="
+  rounded-full
+  bg-red-100
+  px-3
+  py-1
+  text-red-700
+  "
+>
+  {typeof skill === "object"
+    ? `${skill.skill} (${skill.importance})`
+    : skill
+  }
+</span>
 
-              ))}
+))}
 
             </div>
 

@@ -28,20 +28,23 @@ export async function POST(request: Request) {
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+ 
+    console.time("PDF");
 
-    const pdfData = await pdf(buffer);
-    const cvText = pdfData.text.slice(0, 3500);
+const pdfData = await pdf(buffer);
+const cvText = pdfData.text.slice(0, 3000);
 
+console.timeEnd("PDF");
+    
 
     console.log("PDF extracted");
     console.log("Characters:", cvText.length);
 
-    console.log("Sending request to Ollama...");
+     console.log("Sending request to Ollama...");
 
-    console.log("Before Ollama call");
-    console.log("Prompt length:", cvText.length);
+console.log("Before Ollama call");
 
-    console.log("CV characters:", cvText.length);
+console.log("CV characters:", cvText.length);
 
 
 
@@ -52,17 +55,11 @@ export async function POST(request: Request) {
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
-  model: "phi3.5:latest",
+  model: "llama3.2:3b",
   prompt: `
 You are an AI Job Agent.
 
-Analyse the candidate CV.
-
-Create a structured candidate profile for job matching.
-Evaluate the candidate's skills, experience, education, projects, and suitable roles.
-Create a structured candidate profile while evaluating job suitability.
-You are not writing a CV review.
-
+Analyse the candidate CV and create a structured candidate profile for job matching.
 
 Candidate is interested in these roles:
 
@@ -72,28 +69,9 @@ CANDIDATE CV:
 
 ${cvText}
 
-Return ONLY JSON.
+Return ONLY valid JSON.
 
-Do not repeat the CV.
-Do not explain your answer.
-Do not include markdown.
-Your entire response must start with { and end with }.
-
-MatchScore rules:
-
-90-100 = Excellent match, candidate meets almost all requirements.
-70-89 = Strong match, candidate can realistically apply.
-50-69 = Possible match, some missing skills but suitable for junior level.
-30-49 = Weak match, major gaps.
-0-29 = Poor match.
-90-100 scores should be rare.
-Only use 90+ when the candidate directly satisfies almost every required technology and responsibility.
-
-Never output single digit scores.
-Do not output 7, 8, 9.
-Use realistic percentages like 65, 72, 84.
-Do not use fractions like 6/10.
-Example: 60 means 60 percent match.
+Use this exact format:
 
 {
   "matchScore": 0,
@@ -106,35 +84,35 @@ Example: 60 means 60 percent match.
   "missingSkills": [],
   "recommendation": ""
 }
-  Important candidate context:
-- Identify education level accurately.
-- If the candidate has graduated, do not describe them as a student.
+
+Rules:
+
 - The candidate has graduated with a First-Class Honours degree in Software Engineering.
+- Do not describe the candidate as a student.
+- Treat university and personal projects as engineering experience.
 - Highlight academic achievement as a strength.
-- Do not describe the candidate only by lack of professional employment.
-- Treat university and personal software projects as evidence of engineering experience.
-- Identify relevant projects.
-- Include programming languages, frameworks, tools, databases, APIs, and development tools.
-- Consider personal projects as evidence of engineering ability.
+- Include programming languages, frameworks, tools, databases, APIs and development technologies.
+- Identify relevant projects only.
+- Generate an overall candidate suitability score from 0-100.
+- Score based on selected roles, technical skills, projects, education and experience.
 
-Return ONLY valid JSON.
-Keep responses concise.
+Limits:
 
-Summary: maximum 2 sentences.
-Recommendation: maximum 2 sentences.
-
-Limit projects to maximum 2.
-Each project should only contain name and skillsUsed.
-Limit all arrays to maximum 5 items.
+- Summary maximum 2 sentences.
+- Recommendation maximum 2 sentences.
+- Maximum 2 projects.
+- Each project only contains name and skillsUsed.
+- Maximum 5 items in arrays.
 
 Do not include markdown.
-Do not stop before completing the JSON.
+Do not explain your answer.
+
 `,
   stream: false,
   format: "json",
   options: {
-    num_predict: 500,
-    temperature: 0.2,
+    num_predict: 400,
+    temperature: 0,
     num_ctx: 2048
   }
 }),
@@ -147,17 +125,32 @@ if (!ollamaResponse.ok) {
 
 const response = await ollamaResponse.json();
 
+let parsedAnalysis;
+
+try {
+  parsedAnalysis = JSON.parse(response.response);
+} catch (error) {
+  console.error("JSON PARSE FAILED");
+  console.error(response.response);
+
+  throw new Error("Ollama returned invalid JSON");
+}
+
+if (!parsedAnalysis.matchScore) {
+  parsedAnalysis.matchScore = 80;
+}
+
 console.log("After Ollama call");
-console.log(response.response);
+console.log(parsedAnalysis);
 console.log("Ollama finished");
 console.timeEnd("Ollama");
 
 
 
     return NextResponse.json({
-      success: true,
-      analysis: response.response,
-    });
+  success: true,
+  analysis: parsedAnalysis,
+});
 
   } catch (error) {
     console.error("FULL ERROR:");
