@@ -21,6 +21,10 @@ import {
 // current approval by the user. Each test attacks the gate from a different
 // angle — through the repository API and directly through SQL.
 
+// Any database-level gate rejection (002's APPROVAL_GATE, or 004's AUDIT /
+// SUBMISSION_GATE / IMMUTABLE snapshot rule, whichever trigger fires first).
+const GATE = /APPROVAL_GATE|SUBMISSION_GATE|AUDIT|IMMUTABLE/;
+
 let t: TestDb;
 beforeEach(() => {
   t = quietly(freshDb);
@@ -160,7 +164,7 @@ describe("approval gate — enforced by the database (bypassing the repository)"
           t.db
             .prepare("INSERT INTO applications (job_id, status, approved_at, approved_assets_sha256) VALUES (?, ?, datetime('now'), 'x')")
             .run(job.jobId, s),
-        /APPROVAL_GATE/
+        GATE
       );
     }
   });
@@ -172,7 +176,7 @@ describe("approval gate — enforced by the database (bypassing the repository)"
         t.db
           .prepare("UPDATE applications SET status = 'approved', approved_at = datetime('now'), approved_assets_sha256 = 'x' WHERE id = ?")
           .run(app.id),
-      /APPROVAL_GATE/
+      GATE
     );
   });
 
@@ -197,7 +201,7 @@ describe("approval gate — enforced by the database (bypassing the repository)"
           t.db
             .prepare("UPDATE applications SET status = ?, approved_at = datetime('now'), approved_assets_sha256 = 'x' WHERE id = ?")
             .run(s, app.id),
-        /APPROVAL_GATE/
+        GATE
       );
     }
     assert.equal(status(app.id), "ready_for_review");
@@ -205,7 +209,7 @@ describe("approval gate — enforced by the database (bypassing the repository)"
 
   test("approved cannot skip straight to submitted", () => {
     const app = approve(readyApplication());
-    assert.throws(() => t.db.prepare("UPDATE applications SET status = 'submitted' WHERE id = ?").run(app.id), /APPROVAL_GATE/);
+    assert.throws(() => t.db.prepare("UPDATE applications SET status = 'submitted' WHERE id = ?").run(app.id), GATE);
   });
 
   test("approval requires approved_at and a content snapshot", () => {
@@ -225,7 +229,7 @@ describe("approval gate — enforced by the database (bypassing the repository)"
     assert.equal(status(app.id), "ready_for_review");
     t.db.prepare("UPDATE application_assets SET is_current = 1 WHERE application_id = ? AND kind = 'cover_letter' AND version = 1").run(app.id);
     assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
-    assert.throws(() => t.db.prepare("UPDATE applications SET status = 'submitting' WHERE id = ?").run(app.id), /APPROVAL_GATE/);
+    assert.throws(() => t.db.prepare("UPDATE applications SET status = 'submitting' WHERE id = ?").run(app.id), GATE);
   });
 
   test("the event history is append-only", () => {

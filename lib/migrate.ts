@@ -5,6 +5,7 @@ import { sha256 } from "./repositories/shared.ts";
 import { migration001Baseline } from "./migrations/001_baseline.ts";
 import { migration002CoreSchema } from "./migrations/002_core_schema.ts";
 import { migration003ImportLegacyBatches } from "./migrations/003_import_legacy_batches.ts";
+import { migration004ApprovalGateHardening } from "./migrations/004_approval_gate_hardening.ts";
 
 export type Migration = {
   version: number;
@@ -21,6 +22,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration001Baseline,
   migration002CoreSchema,
   migration003ImportLegacyBatches,
+  migration004ApprovalGateHardening,
 ];
 
 export type MigrationResult = {
@@ -29,6 +31,8 @@ export type MigrationResult = {
   applied: number[];
   backupPath: string | null;
   checksumWarnings: string[];
+  /** Applied versions this code does not know (database newer than the code). */
+  unknownVersions: number[];
 };
 
 export type RunMigrationsOptions = {
@@ -98,6 +102,8 @@ function timestamp(date: Date): string {
  * - Before an existing database is migrated, a consistent copy is written with
  *   VACUUM INTO. There are no down-migrations: the backup is the rollback.
  * - A changed checksum for an already-applied migration is reported, not fatal.
+ * - So is a database newer than this code (an applied version it doesn't know):
+ *   the database's own triggers still apply, but this code may be out of date.
  */
 export function runMigrations(db: DB, options: RunMigrationsOptions = {}): MigrationResult {
   const migrations = options.migrations ?? MIGRATIONS;
@@ -115,9 +121,25 @@ export function runMigrations(db: DB, options: RunMigrationsOptions = {}): Migra
     console.warn(`[migrations] ${warning}`);
   }
 
+  const known = new Set(migrations.map((m) => m.version));
+  const unknownVersions = [...applied.keys()].filter((v) => !known.has(v)).sort((a, b) => a - b);
+  if (unknownVersions.length > 0) {
+    console.warn(
+      `[migrations] ${db.name} has migration(s) ${unknownVersions.join(", ")} that this code does not know; ` +
+        "the database is newer than the code."
+    );
+  }
+
   const pending = migrations.filter((m) => !applied.has(m.version));
   if (pending.length === 0) {
-    return { fromVersion, toVersion: fromVersion, applied: [], backupPath: null, checksumWarnings };
+    return {
+      fromVersion,
+      toVersion: fromVersion,
+      applied: [],
+      backupPath: null,
+      checksumWarnings,
+      unknownVersions,
+    };
   }
 
   let backupPath: string | null = null;
@@ -161,5 +183,5 @@ export function runMigrations(db: DB, options: RunMigrationsOptions = {}): Migra
         (backupPath ? `; backup: ${backupPath}` : "")
     );
   }
-  return { fromVersion, toVersion, applied: appliedNow, backupPath, checksumWarnings };
+  return { fromVersion, toVersion, applied: appliedNow, backupPath, checksumWarnings, unknownVersions };
 }

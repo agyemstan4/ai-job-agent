@@ -197,7 +197,7 @@ describe("003 legacy batch import", () => {
     assert.throws(() => beginSubmission(db, id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
     assert.throws(
       () => db.prepare("UPDATE applications SET status = 'submitting' WHERE id = ?").run(id),
-      /APPROVAL_GATE/
+      /APPROVAL_GATE|SUBMISSION_GATE|AUDIT/
     );
 
     transitionApplication(db, id, "ready_for_review", { actor: "user", detail: "Re-review" });

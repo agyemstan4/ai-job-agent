@@ -31,6 +31,8 @@ export type Application = {
   status: ApplicationStatus;
   approvedAt: string | null;
   approvedAssetsSha256: string | null;
+  /** Ordered IDs of the assets that were approved (immutable, so they identify the content). */
+  approvedAssetIds: string | null;
   submissionMethod: SubmissionMethod | null;
   submittedAt: string | null;
   submissionReference: string | null;
@@ -50,6 +52,7 @@ type ApplicationRow = {
   status: ApplicationStatus;
   approved_at: string | null;
   approved_assets_sha256: string | null;
+  approved_asset_ids: string | null;
   submission_method: SubmissionMethod | null;
   submitted_at: string | null;
   submission_reference: string | null;
@@ -70,6 +73,7 @@ function toApplication(row: ApplicationRow): Application {
     status: row.status,
     approvedAt: row.approved_at,
     approvedAssetsSha256: row.approved_assets_sha256,
+    approvedAssetIds: row.approved_asset_ids,
     submissionMethod: row.submission_method,
     submittedAt: row.submitted_at,
     submissionReference: row.submission_reference,
@@ -380,7 +384,9 @@ export function transitionApplication(
     const clearApproval =
       application.status === "approved" || application.status === "submission_failed";
     setStatus(db, id, to, {
-      ...(clearApproval ? { approved_at: null, approved_assets_sha256: null } : {}),
+      ...(clearApproval
+        ? { approved_at: null, approved_assets_sha256: null, approved_asset_ids: null }
+        : {}),
       ...(options.error !== undefined ? { last_error: options.error } : {}),
     });
     return getApplication(db, id)!;
@@ -528,6 +534,17 @@ export function listAssetVersions(db: DB, applicationId: number, kind: AssetKind
   ).map(toAsset);
 }
 
+/**
+ * Ordered IDs of the current assets — the same value migration 004's
+ * triggers compute in SQL to check approval and submission.
+ */
+export function currentAssetIdSet(db: DB, applicationId: number): string | null {
+  const ids = getCurrentAssets(db, applicationId)
+    .map((asset) => asset.id)
+    .sort((a, b) => a - b);
+  return ids.length > 0 ? ids.join(",") : null;
+}
+
 /** Hash of exactly what the reviewer is looking at (all current assets). */
 export function getCurrentAssetsHash(db: DB, applicationId: number): string {
   return assetSetHash(getCurrentAssets(db, applicationId));
@@ -582,6 +599,7 @@ export function approveApplication(
     setStatus(db, id, "approved", {
       approved_at: nowIso(),
       approved_assets_sha256: currentHash,
+      approved_asset_ids: currentAssetIdSet(db, id),
     });
     return getApplication(db, id)!;
   })();
@@ -631,7 +649,9 @@ export function beginSubmission(
 
     if (
       !application.approvedAssetsSha256 ||
-      application.approvedAssetsSha256 !== getCurrentAssetsHash(db, id)
+      application.approvedAssetsSha256 !== getCurrentAssetsHash(db, id) ||
+      !application.approvedAssetIds ||
+      application.approvedAssetIds !== currentAssetIdSet(db, id)
     ) {
       throw new PersistenceError(
         "APPROVAL_REQUIRED",
@@ -639,7 +659,7 @@ export function beginSubmission(
       );
     }
 
-    setStatus(db, id, "submitting", { submission_method: options.method, last_error: null });
+    // Event first: the DB requires every status change to be recorded beforehand.
     insertEvent(db, {
       applicationId: id,
       eventType: "status_change",
@@ -648,6 +668,7 @@ export function beginSubmission(
       actor: options.actor ?? "system",
       detail: `Submission started (${options.method})`,
     });
+    setStatus(db, id, "submitting", { submission_method: options.method, last_error: null });
     return getApplication(db, id)!;
   })();
 }
@@ -668,14 +689,7 @@ export function recordSubmissionResult(
       );
     }
     const to: ApplicationStatus = result.success ? "submitted" : "submission_failed";
-    setStatus(
-      db,
-      id,
-      to,
-      result.success
-        ? { submitted_at: nowIso(), submission_reference: result.reference ?? null, last_error: null }
-        : { last_error: result.error }
-    );
+    // Event first: the DB requires every status change to be recorded beforehand.
     insertEvent(db, {
       applicationId: id,
       eventType: "submission_attempt",
@@ -684,6 +698,14 @@ export function recordSubmissionResult(
       actor,
       detail: result.success ? "Submitted" : result.error,
     });
+    setStatus(
+      db,
+      id,
+      to,
+      result.success
+        ? { submitted_at: nowIso(), submission_reference: result.reference ?? null, last_error: null }
+        : { last_error: result.error }
+    );
     return getApplication(db, id)!;
   })();
 }
