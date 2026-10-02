@@ -122,6 +122,8 @@ if (!combinedResponse.ok) {
 
 const candidateAnalysis = combinedData.analysis;
 setAnalysis(candidateAnalysis);
+const profileId: number | null =
+  typeof combinedData.candidateProfileId === "number" ? combinedData.candidateProfileId : null;
 
 if (combinedData.structuredCV) {
   setStructuredCV(combinedData.structuredCV);
@@ -133,7 +135,7 @@ if (combinedData.structuredCV) {
       const jobsResponse = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: selectedRoles[0], location: "London" }),
+        body: JSON.stringify({ role: selectedRoles[0], location: "London", candidateProfileId: profileId }),
       });
 
       const jobsData = await jobsResponse.json();
@@ -146,8 +148,10 @@ if (combinedData.structuredCV) {
       }
 
       const jobs = jobsData.map((job: any) => ({
-        // id/sourceIds let /api/match mark jobs as seen once they're scored.
+        // id/sourceIds let /api/match mark jobs as seen once they're scored;
+        // jobId is the stored job the match is recorded against.
         id: job.id,
+        jobId: job.jobId,
         sourceIds: job.sourceIds,
         source: job.source,
         title: job.title,
@@ -166,7 +170,7 @@ if (combinedData.structuredCV) {
       const matchResponse = await fetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate: candidateAnalysis, jobs }),
+        body: JSON.stringify({ candidate: candidateAnalysis, jobs, candidateProfileId: profileId }),
       });
 
       const matchResults = await matchResponse.json();

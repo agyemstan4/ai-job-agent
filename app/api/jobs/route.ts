@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { filterNewJobs } from "@/lib/db";
+import db, { filterNewJobs } from "@/lib/db";
+import { recordDiscovery } from "@/lib/pipeline/discovery";
+import type { DiscoveredListing } from "@/lib/pipeline/discovery";
 
 export async function POST(req: Request) {
   try {
-    const { role, location } = await req.json();
+    const { role, location, candidateProfileId, triggeredBy } = await req.json();
 
     const appId = process.env.ADZUNA_APP_ID;
     const appKey = process.env.ADZUNA_APP_KEY;
@@ -62,6 +64,7 @@ export async function POST(req: Request) {
         description: job.description,
         url: job.redirect_url,
         source: "Adzuna",
+        raw: job,
       }));
     };
 
@@ -103,6 +106,7 @@ export async function POST(req: Request) {
         description: job.jobDescription,
         url: job.jobUrl,
         source: "Reed",
+        raw: job,
       }));
     };
 
@@ -122,32 +126,67 @@ export async function POST(req: Request) {
       );
     }
 
-    // ── Deduplicate by title+company within this batch ───────────────────────
-    // The last listing for a title+company wins (as before), but every source
-    // ID in the group is kept so the same job from another source (Adzuna vs
-    // Reed) is also recognised as seen in future runs.
-    const groups = new Map<string, { job: (typeof allJobs)[number]; sourceIds: string[] }>();
-    for (const job of allJobs) {
-      const key = `${job.title}-${job.company}`;
-      const sourceIds = [...(groups.get(key)?.sourceIds ?? []), job.id];
-      groups.set(key, { job, sourceIds: Array.from(new Set(sourceIds)) });
+    // ── Record listings and deduplicate into canonical jobs ─────────────────
+    // Listings are merged into one job when they are the same vacancy (same
+    // source ID, or same normalised company + title, across Adzuna and Reed).
+    // The last listing of a job is the one returned (as before), with every
+    // source ID of the job in this batch, so /api/match marks them all seen.
+    // Jobs are NOT marked as seen here: /api/match does that once they have
+    // actually been scored, so fetched-but-unprocessed jobs stay eligible.
+    let newJobs: (Omit<(typeof allJobs)[number], "raw"> & { sourceIds: string[]; jobId?: number })[];
+    try {
+      const listings: DiscoveredListing[] = allJobs.map((job) => {
+        const sourceId = job.source === "Reed" ? "reed" : "adzuna";
+        return {
+          sourceId,
+          externalId: String(job.id).slice(sourceId.length + 1),
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          url: job.url,
+          salaryMin: job.salary_min ?? null,
+          salaryMax: job.salary_max ?? null,
+          salaryIsPredicted:
+            sourceId === "adzuna" && job.raw?.salary_is_predicted !== undefined
+              ? String(job.raw.salary_is_predicted) === "1"
+              : null,
+          contractType: job.contract_type ?? null,
+          contractTime: sourceId === "adzuna" ? job.raw?.contract_time ?? null : null,
+          postedAt: job.created ?? null,
+          description: job.description ?? null,
+          raw: job.raw,
+        };
+      });
+      const discovery = recordDiscovery(db, {
+        listings,
+        candidateProfileId: typeof candidateProfileId === "number" ? candidateProfileId : null,
+        triggeredBy: triggeredBy === "scheduler" ? "scheduler" : "ui",
+        params: { role, location },
+      });
+      for (const warning of discovery.warnings) console.warn("Discovery:", warning);
+      console.log("UNIQUE (this batch):", discovery.stats.uniqueJobs);
+      newJobs = discovery.newJobs.map((job) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { raw, ...representative } = allJobs[job.representativeIndex];
+        return { ...representative, sourceIds: job.sourceIds, jobId: job.jobId };
+      });
+    } catch (error) {
+      // Persisting must not stop job search: fall back to the previous
+      // in-memory deduplication and seen_jobs check.
+      console.error("Recording discovered jobs failed; using legacy deduplication:", error);
+      const groups = new Map<string, { job: (typeof allJobs)[number]; sourceIds: string[] }>();
+      for (const job of allJobs) {
+        const key = `${job.title}-${job.company}`;
+        const sourceIds = [...(groups.get(key)?.sourceIds ?? []), job.id];
+        groups.set(key, { job, sourceIds: Array.from(new Set(sourceIds)) });
+      }
+      newJobs = Array.from(groups.values())
+        .filter(({ sourceIds }) => filterNewJobs(sourceIds.map((id) => ({ id }))).length === sourceIds.length)
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        .map(({ job: { raw, ...job }, sourceIds }) => ({ ...job, sourceIds }));
     }
-    const withinBatchUnique = Array.from(groups.values()).map(({ job, sourceIds }) => ({
-      ...job,
-      sourceIds,
-    }));
-    console.log("UNIQUE (this batch):", withinBatchUnique.length);
+    console.log("NEW (not processed before):", newJobs.length);
 
-    // ── Deduplicate against DB — filter out already-seen job IDs ────────────
-    // A job is skipped if any of its source IDs has been seen before.
-    const newJobs = withinBatchUnique.filter(
-      (job) => filterNewJobs(job.sourceIds.map((id) => ({ id }))).length === job.sourceIds.length
-    );
-    console.log("NEW (not seen before):", newJobs.length);
-
-    // Jobs are NOT marked as seen here. /api/match marks them once they have
-    // actually been scored, so jobs that are fetched but never processed stay
-    // eligible for the next run.
     return NextResponse.json(newJobs);
   } catch (error) {
     console.error(error);

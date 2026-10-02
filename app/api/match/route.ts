@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { markJobsSeen } from "@/lib/db";
+import db, { markJobsSeen } from "@/lib/db";
+import { abortMatching, beginMatching, recordMatchResults } from "@/lib/pipeline/matching";
+import type { MatchingSession, ScoredJob } from "@/lib/pipeline/matching";
+
+const MATCH_MODEL = "llama3.2:3b";
+// Recorded on each match. Bump when the scoring prompt below changes.
+const MATCH_PROMPT_VERSION = "match/v1";
 
 // Returns a 0-100 integer, or null if the model gave no usable number.
 function parseScore(value: unknown): number | null {
@@ -117,8 +123,9 @@ export async function POST(req: Request) {
   const totalStart = Date.now();
   console.log("🔥 MATCH API STARTED");
 
+  let session: MatchingSession | null = null;
   try {
-    const { candidate, jobs } = await req.json();
+    const { candidate, jobs, candidateProfileId } = await req.json();
 
 console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length);
 
@@ -163,13 +170,21 @@ console.log(
   }))
 );
 
-    const filteredJobs = jobs.filter((job: any) => {
+    // Why a job fails the pre-filter, or null if it passes. A job passes
+    // only with a developer role keyword, a candidate skill, and no senior title.
+    type IncomingJob = { jobId?: unknown; title?: string; description?: string };
+    const filterReasonFor = (job: IncomingJob): string | null => {
       const text = `${job.title} ${job.description}`.toLowerCase();
       const hasDeveloperRole = roleKeywords.some(kw => text.includes(kw));
       const hasRelevantSkill = skillKeywords.some((skill: string) => text.includes(skill));
       const isSenior = seniorTitlePattern.test(job.title || "");
-      return hasDeveloperRole && hasRelevantSkill && !isSenior;
-    });
+      if (!hasDeveloperRole) return "No developer role keyword in the title or description";
+      if (!hasRelevantSkill) return "None of the candidate's skills appear in the title or description";
+      if (isSenior) return "Senior title";
+      return null;
+    };
+
+    const filteredJobs = jobs.filter((job: IncomingJob) => filterReasonFor(job) === null);
 
     const uniqueFilteredJobs = Array.from(
       new Map<string, any>(
@@ -202,9 +217,67 @@ console.log("🔎 UNIQUE JOB COUNT:", uniqueFilteredJobs.length);
 console.log("🔎 RANKED JOB COUNT:", rankedJobs.length);
 console.log("🔎 SELECTED JOB COUNT:", selectedJobs.length);
 
+    // ── Persistence (Step 7) ───────────────────────────────────────────────
+    // Only for a stored candidate profile (the UI); the scheduler sends none
+    // and only marks seen_jobs, as before. Persisting never changes which
+    // jobs are scored or what this route returns, and a failure to persist
+    // is reported, not fatal.
+    const persistenceWarnings: string[] = [];
+    const jobIdOf = (job: IncomingJob | null | undefined): number | null =>
+      typeof job?.jobId === "number" ? job.jobId : null;
+    const filteredOutJobs = jobs
+      .map((job: IncomingJob) => ({ jobId: jobIdOf(job), reason: filterReasonFor(job) }))
+      .filter((job: { jobId: number | null; reason: string | null }): job is { jobId: number; reason: string } =>
+        job.jobId !== null && job.reason !== null
+      );
+    // Scoring failures by jobNumber (1-based index into selectedJobs).
+    const failures = new Map<number, string>();
+    try {
+      session = beginMatching(db, { candidateProfileId, params: { jobsReceived: jobs.length } });
+      if (session) persistenceWarnings.push(...session.warnings);
+    } catch (error) {
+      persistenceWarnings.push(`Matches are not being saved: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const persistMatches = (scored: ScoredJob[]): Map<number, number> => {
+      if (!session) return new Map();
+      try {
+        const failed = selectedJobs.flatMap((job: IncomingJob, index: number) => {
+          const error = failures.get(index + 1);
+          const jobId = jobIdOf(job);
+          return error && jobId !== null ? [{ jobId, error }] : [];
+        });
+        const result = recordMatchResults(db, session, {
+          scored,
+          filteredOut: filteredOutJobs,
+          failed,
+          model: MATCH_MODEL,
+          promptVersion: MATCH_PROMPT_VERSION,
+          stats: {
+            jobsReceived: jobs.length,
+            filteredOut: jobs.length - filteredJobs.length,
+            selected: selectedJobs.length,
+            scored: scored.length,
+            failed: failed.length,
+          },
+        });
+        persistenceWarnings.push(...result.warnings);
+        return result.matchIds;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("Saving match results failed:", error);
+        persistenceWarnings.push(`Match results were not saved: ${message}`);
+        abortMatching(db, session, message);
+        return new Map();
+      }
+    };
+    const withWarnings = <T extends object>(body: T) =>
+      persistenceWarnings.length > 0 ? { ...body, persistenceWarnings } : body;
+
 if (selectedJobs.length === 0) {
   console.log("⚠️ NO JOBS SURVIVED MATCH FILTERING");
-  return NextResponse.json({ matches: [] });
+  persistMatches([]);
+  return NextResponse.json(withWarnings({ matches: [] }));
 }
 
     console.log("Filtered jobs:", selectedJobs.map((job: any) => job.title));
@@ -257,7 +330,7 @@ Rules:
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "llama3.2:3b",
+          model: MATCH_MODEL,
           prompt: jobPrompt,
           stream: false,
           format: "json",
@@ -284,6 +357,7 @@ Rules:
         return { ...parsed, jobNumber: index + 1 };
       } catch {
         console.error(`❌ Job ${index + 1} failed to parse`);
+        failures.set(index + 1, "The model's response was not valid JSON");
         return null;
       }
     };
@@ -296,6 +370,7 @@ Rules:
       callOllama(job, index).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         ollamaErrors.push(message);
+        failures.set(index + 1, `Ollama call failed: ${message}`);
         console.error(`❌ Job ${index + 1} Ollama call failed:`, message);
         return null;
       });
@@ -339,14 +414,15 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
 
     if (scoredJobs.length === 0) {
       // Nothing was scored, so nothing is marked as seen — these jobs remain
-      // eligible next time.
+      // eligible next time (failed matches are retried).
+      persistMatches([]);
       return NextResponse.json(
-        {
+        withWarnings({
           error: "AI scoring failed",
           details: ollamaErrors.length > 0
             ? `Ollama failed for ${ollamaErrors.length} of ${selectedJobs.length} jobs: ${ollamaErrors[0]}`
             : "The AI model did not return any valid match scores.",
-        },
+        }),
         { status: 502 }
       );
     }
@@ -401,6 +477,7 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
 
         if (modelScore === null && !hasBreakdown) {
           console.warn(`⚠️ Job ${result.jobNumber} (${job.title}) returned no usable score — skipped`);
+          failures.set(result.jobNumber, "The model returned no usable score");
           return null;
         }
 
@@ -422,6 +499,9 @@ const finalMatchScore = modelScore === null
 
         return {
           id: job.id,
+          jobId: jobIdOf(job),
+          modelScore,
+          breakdownScore,
           sourceIds: job.sourceIds,
           source: job.source,
           title: job.title,
@@ -491,14 +571,38 @@ const finalMatchScore = modelScore === null
       markJobsSeen(scoredIds);
     }
 
+    const matchIds = persistMatches(
+      matches.flatMap((match) =>
+        match.jobId === null
+          ? []
+          : [{
+              jobId: match.jobId,
+              score: match.matchScore,
+              modelScore: match.modelScore,
+              breakdownScore: match.breakdownScore,
+              breakdown: match.breakdown,
+              reason: match.reason,
+              strengths: match.strengths,
+              missingSkills: match.missingSkills,
+            }]
+      )
+    );
+    // modelScore/breakdownScore were only carried for persistence.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const responseMatches = matches.map(({ modelScore, breakdownScore, ...match }) => ({
+      ...match,
+      matchId: match.jobId === null ? null : matchIds.get(match.jobId) ?? null,
+    }));
+
     console.log("Finished scoring jobs.");
-    console.log("FINAL MATCHES:", JSON.stringify(matches, null, 2));
+    console.log("FINAL MATCHES:", JSON.stringify(responseMatches, null, 2));
     console.log(`🏁 MATCH API TOTAL: ${((Date.now() - totalStart) / 1000).toFixed(2)}s`);
 
-    return NextResponse.json({ matches });
+    return NextResponse.json(withWarnings({ matches: responseMatches }));
 
   } catch (error) {
     console.error(error);
+    abortMatching(db, session, error instanceof Error ? error.message : String(error));
     return NextResponse.json(
       {
         error: "Matching failed",

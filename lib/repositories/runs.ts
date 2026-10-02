@@ -103,6 +103,22 @@ export const failRun = (db: DB, id: number, error: string, stats?: Record<string
 
 export const cancelRun = (db: DB, id: number) => finishRun(db, id, "cancelled");
 
+/**
+ * Marks runs of this kind that have been "running" for longer than
+ * olderThanMinutes as failed. A process that crashed or was restarted
+ * mid-run would otherwise block every later run of that kind.
+ * Returns how many runs were failed.
+ */
+export function failStaleRuns(db: DB, kind: RunKind, olderThanMinutes: number): number {
+  return db
+    .prepare(
+      `UPDATE pipeline_runs
+       SET status = 'failed', error = 'Abandoned: still running after ' || ? || ' minutes', finished_at = ?
+       WHERE kind = ? AND status = 'running' AND started_at < datetime('now', ?)`
+    )
+    .run(olderThanMinutes, nowIso(), kind, `-${olderThanMinutes} minutes`).changes;
+}
+
 export function getRun(db: DB, id: number): PipelineRun | null {
   const row = db.prepare("SELECT * FROM pipeline_runs WHERE id = ?").get(id) as RunRow | undefined;
   return row ? toRun(row) : null;
