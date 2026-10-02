@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { TestDb } from "./helpers.ts";
 import { count, createLegacyDbFile, freshDb, makeTempDir, quietly, removeTempDir, seedSeenJobs } from "./helpers.ts";
 import type { SaveCvAnalysisInput } from "../lib/pipeline/cv.ts";
-import { saveCvAnalysis } from "../lib/pipeline/cv.ts";
+import { analysisForClient, findReusableCvAnalysis, saveCvAnalysis } from "../lib/pipeline/cv.ts";
 import { openDatabase } from "../lib/database.ts";
 import {
   createCandidate,
@@ -38,6 +38,7 @@ function upload(overrides: Partial<SaveCvAnalysisInput> = {}): SaveCvAnalysisInp
       location: "London",
       projects: [{ name: "VibeNSync", bullets: ["Built it"] }],
     },
+    inputs: { selectedRoles: ["Junior Software Engineer"] },
     fallbackName: "Jane Doe From Text",
     model: "llama3.2:3b",
     promptVersion: "analyse-and-extract/v1",
@@ -77,7 +78,8 @@ describe("saveCvAnalysis: first upload", () => {
     assert.equal(profile.experienceLevel, "Graduate");
     assert.equal(profile.model, "llama3.2:3b");
     assert.equal(profile.promptVersion, "analyse-and-extract/v1");
-    assert.deepEqual(profile.analysis, upload().analysis);
+    assert.deepEqual(analysisForClient(profile), upload().analysis);
+    assert.deepEqual(profile.analysis._inputs, { selectedRoles: ["Junior Software Engineer"] });
     assert.deepEqual(profile.structuredCv, upload().structuredCv);
   });
 
@@ -184,6 +186,97 @@ describe("saveCvAnalysis: re-uploads and versioning", () => {
     assert.equal(reupload.profileOutcome, "created");
     assert.notEqual(reupload.profile.id, edit.id);
     assert.equal(reupload.profile.origin, "ai_extraction");
+  });
+});
+
+describe("findReusableCvAnalysis: re-uploads skip the AI", () => {
+  const lookup = (overrides: Partial<Parameters<typeof findReusableCvAnalysis>[1]> = {}) =>
+    findReusableCvAnalysis(t.db, {
+      file: CV_A,
+      inputs: { selectedRoles: ["Junior Software Engineer"] },
+      model: "llama3.2:3b",
+      promptVersion: "analyse-and-extract/v1",
+      ...overrides,
+    });
+
+  test("nothing to reuse on an empty database or for an unknown CV", () => {
+    assert.equal(lookup(), null);
+    saveCvAnalysis(t.db, upload());
+    assert.equal(lookup({ file: CV_B }), null);
+  });
+
+  test("the same CV with the same inputs reuses the current profile without writing anything", () => {
+    const saved = saveCvAnalysis(t.db, upload());
+    const before = profileRows();
+    const reused = lookup()!;
+
+    assert.equal(reused.profileOutcome, "unchanged");
+    assert.equal(reused.profile.id, saved.profile.id);
+    assert.deepEqual(reused.analysis, upload().analysis); // stored inputs are not exposed
+    assert.equal("_inputs" in reused.analysis, false);
+    assert.deepEqual(reused.structuredCv, upload().structuredCv);
+    assert.deepEqual(profileRows(), before);
+    assert.equal(count(t.db, "cv_documents"), 1);
+    assert.equal(count(t.db, "candidates"), 1);
+  });
+
+  test("different roles, model or prompt version are not reused", () => {
+    saveCvAnalysis(t.db, upload());
+    assert.equal(lookup({ inputs: { selectedRoles: ["Android Developer"] } }), null);
+    assert.equal(lookup({ inputs: { selectedRoles: [] } }), null);
+    // Role order is part of the prompt, so it is part of the identity.
+    saveCvAnalysis(t.db, upload({ inputs: { selectedRoles: ["A", "B"] } }));
+    assert.equal(lookup({ inputs: { selectedRoles: ["B", "A"] } }), null);
+    assert.equal(lookup({ model: "llama3.1:8b" }), null);
+    assert.equal(lookup({ promptVersion: "analyse-and-extract/v2" }), null);
+  });
+
+  test("going back to an earlier CV reactivates its stored profile", () => {
+    const a = saveCvAnalysis(t.db, upload());
+    const b = saveCvAnalysis(t.db, upload({ file: CV_B, analysis: { other: true } }));
+    const reused = lookup()!;
+
+    assert.equal(reused.profileOutcome, "reactivated");
+    assert.equal(reused.profile.id, a.profile.id);
+    assert.equal(getCurrentProfile(t.db, a.candidateId)?.id, a.profile.id);
+    assert.equal(listProfiles(t.db, a.candidateId).find((p) => p.id === b.profile.id)?.isCurrent, false);
+    assert.equal(count(t.db, "candidate_profiles", "is_current = 1"), 1);
+    assert.equal(count(t.db, "candidate_profiles"), 2);
+  });
+
+  test("the newest matching version wins when several exist for the same CV", () => {
+    saveCvAnalysis(t.db, upload());
+    const v2 = saveCvAnalysis(t.db, upload({ analysis: { matchScore: 81 } }));
+    saveCvAnalysis(t.db, upload({ file: CV_B }));
+    const reused = lookup()!;
+    assert.equal(reused.profile.id, v2.profile.id);
+    assert.equal(reused.profileOutcome, "reactivated");
+  });
+
+  test("profiles saved without recorded inputs (or by the user) are never reused", () => {
+    const saved = saveCvAnalysis(t.db, upload());
+    createProfileVersion(t.db, {
+      candidateId: saved.candidateId,
+      cvDocumentId: saved.cvDocumentId,
+      origin: "ai_extraction",
+      analysis: { noInputs: true },
+      structuredCv: {},
+      model: "llama3.2:3b",
+      promptVersion: "analyse-and-extract/v1",
+    });
+    // The current version has no recorded inputs; the older one does.
+    assert.equal(lookup()?.profile.id, saved.profile.id);
+
+    createProfileVersion(t.db, {
+      candidateId: saved.candidateId,
+      cvDocumentId: saved.cvDocumentId,
+      origin: "user_edit",
+      analysis: { _inputs: { selectedRoles: ["Junior Software Engineer"] } },
+      structuredCv: {},
+      model: "llama3.2:3b",
+      promptVersion: "analyse-and-extract/v1",
+    });
+    assert.equal(lookup()?.profile.origin, "ai_extraction");
   });
 });
 

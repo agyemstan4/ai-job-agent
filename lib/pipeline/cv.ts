@@ -4,15 +4,29 @@ import {
   addCvDocument,
   createCandidate,
   createProfileVersion,
+  findCvDocumentBySha256,
   findIdenticalProfileVersion,
   getDefaultCandidate,
+  listProfiles,
   setCurrentProfile,
   updateCandidate,
 } from "../repositories/candidates.ts";
+import { sha256 } from "../repositories/shared.ts";
 
 // Step 5: persists an uploaded CV and the profile extracted from it
 // (/api/analyse-and-extract). Single-user: everything belongs to the default
 // candidate, created on the first upload.
+//
+// The AI output is not deterministic, so re-analysing the same CV gives a
+// slightly different profile each time. Instead, an upload of a CV that was
+// already analysed with the same inputs reuses the stored profile
+// (findReusableCvAnalysis) and the AI is not called again.
+
+/** Inputs that shape the analysis besides the CV, the model and the prompt. */
+export type AnalysisInputs = { selectedRoles: string[] };
+
+// Stored inside analysis_json under this key; never returned to the client.
+const INPUTS_KEY = "_inputs";
 
 export type SaveCvAnalysisInput = {
   file: Buffer;
@@ -21,11 +35,77 @@ export type SaveCvAnalysisInput = {
   extractedText?: string | null;
   analysis: Record<string, unknown>;
   structuredCv: Record<string, unknown>;
+  inputs: AnalysisInputs;
   /** Used as the candidate's name when the structured CV has none. */
   fallbackName: string;
   model: string;
   promptVersion: string;
 };
+
+function withInputs(analysis: Record<string, unknown>, inputs: AnalysisInputs) {
+  return { ...analysis, [INPUTS_KEY]: { selectedRoles: inputs.selectedRoles } };
+}
+
+/** The analysis as the client sees it (without the stored inputs). */
+export function analysisForClient(profile: CandidateProfile): Record<string, unknown> {
+  const { [INPUTS_KEY]: _inputs, ...analysis } = profile.analysis;
+  void _inputs;
+  return analysis;
+}
+
+function sameInputs(profile: CandidateProfile, inputs: AnalysisInputs): boolean {
+  const stored = profile.analysis[INPUTS_KEY] as AnalysisInputs | undefined;
+  return (
+    stored !== undefined &&
+    JSON.stringify(stored.selectedRoles) === JSON.stringify(inputs.selectedRoles)
+  );
+}
+
+export type ReusedCvAnalysis = {
+  profile: CandidateProfile;
+  profileOutcome: "unchanged" | "reactivated";
+  analysis: Record<string, unknown>;
+  structuredCv: Record<string, unknown>;
+};
+
+/**
+ * The stored analysis of exactly this CV (same bytes) with the same inputs,
+ * model and prompt version, if there is one — made current if it was not.
+ * Only AI extractions qualify; profiles saved without recorded inputs never do.
+ */
+export function findReusableCvAnalysis(
+  db: DB,
+  input: { file: Buffer; inputs: AnalysisInputs; model: string; promptVersion: string }
+): ReusedCvAnalysis | null {
+  return db
+    .transaction((): ReusedCvAnalysis | null => {
+      const candidate = getDefaultCandidate(db);
+      if (!candidate) return null;
+      const document = findCvDocumentBySha256(db, candidate.id, sha256(input.file));
+      if (!document) return null;
+
+      const matching = listProfiles(db, candidate.id).filter(
+        (profile) =>
+          profile.cvDocumentId === document.id &&
+          profile.origin === "ai_extraction" &&
+          profile.model === input.model &&
+          profile.promptVersion === input.promptVersion &&
+          sameInputs(profile, input.inputs)
+      );
+      // Prefer the current version; otherwise the newest (listProfiles is newest first).
+      const chosen = matching.find((profile) => profile.isCurrent) ?? matching[0];
+      if (!chosen) return null;
+
+      const profile = chosen.isCurrent ? chosen : setCurrentProfile(db, chosen.id);
+      return {
+        profile,
+        profileOutcome: chosen.isCurrent ? "unchanged" : "reactivated",
+        analysis: analysisForClient(profile),
+        structuredCv: profile.structuredCv,
+      };
+    })
+    .immediate();
+}
 
 /**
  * created     — new profile version, now current
@@ -90,7 +170,7 @@ export function saveCvAnalysis(db: DB, input: SaveCvAnalysisInput): SaveCvAnalys
         candidateId: candidate.id,
         cvDocumentId: document.id,
         origin: "ai_extraction" as const,
-        analysis: input.analysis,
+        analysis: withInputs(input.analysis, input.inputs),
         structuredCv: input.structuredCv,
         model: input.model,
         promptVersion: input.promptVersion,

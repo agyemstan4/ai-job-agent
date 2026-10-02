@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
 import db from "@/lib/db";
-import { saveCvAnalysis } from "@/lib/pipeline/cv";
+import { findReusableCvAnalysis, saveCvAnalysis } from "@/lib/pipeline/cv";
 import { parseOllamaJson } from "@/lib/ollama-json";
 
 // @ts-ignore
@@ -80,6 +80,37 @@ export async function POST(request: Request) {
     console.log("Reading PDF...");
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+
+    // The same CV analysed before with the same roles, model and prompt: reuse
+    // the stored profile instead of re-running the (slow, non-deterministic)
+    // analysis. A lookup failure just falls through to a fresh analysis.
+    const analysisInputs = {
+      selectedRoles: Array.isArray(selectedRoles) ? selectedRoles.map(String) : [],
+    };
+    try {
+      const reused = findReusableCvAnalysis(db, {
+        file: buffer,
+        inputs: analysisInputs,
+        model: OLLAMA_MODEL,
+        promptVersion: PROMPT_VERSION,
+      });
+      if (reused) {
+        console.log("Reusing stored CV analysis:", {
+          profileId: reused.profile.id,
+          profileVersion: reused.profile.version,
+          profileOutcome: reused.profileOutcome,
+        });
+        return NextResponse.json({
+          success: true,
+          analysis: reused.analysis,
+          structuredCV: reused.structuredCv,
+          candidateProfileId: reused.profile.id,
+          reusedAnalysis: true,
+        });
+      }
+    } catch (error) {
+      console.error("Looking up a stored CV analysis failed:", error);
+    }
 
     console.time("PDF");
     const pdfData = await pdf(buffer);
@@ -307,6 +338,7 @@ const response = (await ollamaResponse.json()) as {
         extractedText: pdfData.text,
         analysis,
         structuredCv: structuredCV,
+        inputs: analysisInputs,
         fallbackName: candidateName,
         model: OLLAMA_MODEL,
         promptVersion: PROMPT_VERSION,

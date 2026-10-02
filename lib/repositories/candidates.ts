@@ -177,6 +177,14 @@ export function getCvDocument(db: DB, id: number): CvDocument | null {
   return row ? toCvDocument(row) : null;
 }
 
+/** A candidate's stored CV with exactly these bytes (by SHA-256), if any. */
+export function findCvDocumentBySha256(db: DB, candidateId: number, hash: string): CvDocument | null {
+  const row = db
+    .prepare(`SELECT ${CV_DOCUMENT_COLUMNS} FROM cv_documents WHERE candidate_id = ? AND sha256 = ?`)
+    .get(candidateId, hash) as CvDocumentRow | undefined;
+  return row ? toCvDocument(row) : null;
+}
+
 export function getCvDocumentFile(db: DB, id: number): Buffer | null {
   const row = db.prepare("SELECT file_blob FROM cv_documents WHERE id = ?").get(id) as
     | { file_blob: Buffer }
