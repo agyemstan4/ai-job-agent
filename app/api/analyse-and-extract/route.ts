@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
+import db from "@/lib/db";
+import { saveCvAnalysis } from "@/lib/pipeline/cv";
 
 // @ts-ignore
 const pdf = require("pdf-parse/lib/pdf-parse.js");
 
 export const runtime = "nodejs";
+
+const OLLAMA_MODEL = "llama3.2:3b";
+// Recorded on each profile version. Bump when the prompt below changes.
+const PROMPT_VERSION = "analyse-and-extract/v1";
 
 const longTimeoutAgent = new Agent({
   headersTimeout: 600000,
@@ -95,7 +101,7 @@ export async function POST(request: Request) {
         headers: { "Content-Type": "application/json" },
         dispatcher: longTimeoutAgent,
         body: JSON.stringify({
-          model: "llama3.2:3b",
+          model: OLLAMA_MODEL,
           prompt: `
 You are an AI Job Agent. You will do THREE tasks on the same CV in one pass: (1) a candidate analysis, (2) structured CV parsing, (3) project extraction. Do all three carefully — do not skip or shortcut any of them.
 
@@ -280,10 +286,43 @@ const response = (await ollamaResponse.json()) as {
       projectCount: projects.length,
     });
 
+    // Persisting is best-effort: a database failure is reported alongside the
+    // analysis instead of discarding it.
+    let candidateProfileId: number | null = null;
+    const persistenceWarnings: string[] = [];
+    try {
+      const saved = saveCvAnalysis(db, {
+        file: buffer,
+        originalFilename: file.name || "cv.pdf",
+        mimeType: file.type || "application/pdf",
+        extractedText: pdfData.text,
+        analysis,
+        structuredCv: structuredCV,
+        fallbackName: candidateName,
+        model: OLLAMA_MODEL,
+        promptVersion: PROMPT_VERSION,
+      });
+      candidateProfileId = saved.profile.id;
+      console.log("CV saved:", {
+        cvDocumentId: saved.cvDocumentId,
+        documentCreated: saved.documentCreated,
+        profileId: saved.profile.id,
+        profileVersion: saved.profile.version,
+        profileOutcome: saved.profileOutcome,
+      });
+    } catch (error) {
+      console.error("Saving the CV analysis failed:", error);
+      persistenceWarnings.push(
+        `The analysis was not saved: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
     return NextResponse.json({
       success: true,
       analysis,
       structuredCV,
+      candidateProfileId,
+      ...(persistenceWarnings.length > 0 ? { persistenceWarnings } : {}),
     });
   } catch (error) {
     console.error("FULL ERROR (analyse-and-extract):");

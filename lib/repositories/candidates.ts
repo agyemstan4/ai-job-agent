@@ -317,6 +317,43 @@ export function listProfiles(db: DB, candidateId: number): CandidateProfile[] {
   ).map(toProfile);
 }
 
+/**
+ * The newest version of a candidate's profile with exactly this content
+ * (same CV, origin, model, prompt version and byte-identical JSON), if any.
+ * JSON is compared as stored by createProfileVersion (JSON.stringify).
+ */
+export function findIdenticalProfileVersion(
+  db: DB,
+  input: {
+    candidateId: number;
+    cvDocumentId: number | null;
+    origin: ProfileOrigin;
+    analysis: Record<string, unknown>;
+    structuredCv: Record<string, unknown>;
+    model?: string | null;
+    promptVersion?: string | null;
+  }
+): CandidateProfile | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM candidate_profiles
+       WHERE candidate_id = ? AND cv_document_id IS ? AND origin = ?
+         AND analysis_json = ? AND structured_cv_json = ?
+         AND model IS ? AND prompt_version IS ?
+       ORDER BY version DESC LIMIT 1`
+    )
+    .get(
+      input.candidateId,
+      input.cvDocumentId,
+      input.origin,
+      JSON.stringify(input.analysis),
+      JSON.stringify(input.structuredCv),
+      input.model ?? null,
+      input.promptVersion ?? null
+    ) as ProfileRow | undefined;
+  return row ? toProfile(row) : null;
+}
+
 export function setCurrentProfile(db: DB, profileId: number): CandidateProfile {
   const profile = getProfile(db, profileId);
   if (!profile) throw new PersistenceError("NOT_FOUND", `Profile ${profileId} not found`);
