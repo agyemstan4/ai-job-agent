@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
 import db from "@/lib/db";
 import { saveCvAnalysis } from "@/lib/pipeline/cv";
+import { parseOllamaJson } from "@/lib/ollama-json";
 
 // @ts-ignore
 const pdf = require("pdf-parse/lib/pdf-parse.js");
@@ -12,9 +13,16 @@ const OLLAMA_MODEL = "llama3.2:3b";
 // Recorded on each profile version. Bump when the prompt below changes.
 const PROMPT_VERSION = "analyse-and-extract/v1";
 
+// The combined analysis of a full CV needs ~2,500 output tokens, and on CPU
+// the model produces ~5 tokens/s. num_ctx must hold the prompt (up to ~3,300
+// tokens for an 8,000-character CV) plus the output.
+const NUM_PREDICT = 3584;
+const NUM_CTX = 8192;
+
+// Ollama only replies once generation has finished.
 const longTimeoutAgent = new Agent({
-  headersTimeout: 600000,
-  bodyTimeout: 600000,
+  headersTimeout: 1_200_000,
+  bodyTimeout: 1_200_000,
 });
 
 // The model unreliably splits a trailing year off a project name
@@ -182,9 +190,9 @@ Do not include markdown. Do not explain your answer. Do not wrap the JSON in cod
           format: "json",
           keep_alive: "10m",
           options: {
-            num_predict: 1400,
+            num_predict: NUM_PREDICT,
             temperature: 0,
-            num_ctx: 4096,
+            num_ctx: NUM_CTX,
           },
         }),
       }
@@ -196,6 +204,7 @@ Do not include markdown. Do not explain your answer. Do not wrap the JSON in cod
 
 const response = (await ollamaResponse.json()) as {
   response: string;
+  done_reason?: string;
   total_duration?: number;
   load_duration?: number;
   prompt_eval_count?: number;
@@ -228,11 +237,11 @@ const response = (await ollamaResponse.json()) as {
 
     let parsed: any;
     try {
-      parsed = JSON.parse(response.response);
+      parsed = parseOllamaJson(response, NUM_PREDICT);
     } catch (error) {
       console.error("JSON PARSE FAILED");
       console.error(response.response);
-      throw new Error("Ollama returned invalid JSON");
+      throw error;
     }
 
     console.timeEnd("Ollama-Combined");
