@@ -1,64 +1,8 @@
-import Database from "better-sqlite3";
-import path from "path";
-import fs from "fs";
+import { openDatabase, resolveDbPath } from "./database.ts";
 
-const DATA_DIR = path.join(process.cwd(), ".data");
-const DB_PATH = path.join(DATA_DIR, "jobs.db");
-
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-const db = new Database(DB_PATH);
-
-db.pragma("journal_mode = WAL");
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS batch_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    job_count INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'completed'
-  );
-
-  CREATE TABLE IF NOT EXISTS batch_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_run_id INTEGER NOT NULL REFERENCES batch_runs(id),
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-
-    job_title TEXT NOT NULL,
-    job_company TEXT NOT NULL,
-    job_location TEXT,
-    job_url TEXT,
-    job_salary_min REAL,
-    job_salary_max REAL,
-    job_contract_type TEXT,
-    match_score INTEGER,
-    match_reason TEXT,
-
-    cover_letter TEXT,
-    cv_file BLOB,
-    cv_filename TEXT,
-
-    status TEXT NOT NULL DEFAULT 'pending',
-    reviewed_at TEXT,
-    notes TEXT,
-    error TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS seen_jobs (
-    job_id TEXT PRIMARY KEY,
-    first_seen TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-`);
-
-// Databases created before the "error" column existed need it added.
-const batchResultColumns = db
-  .prepare("PRAGMA table_info(batch_results)")
-  .all() as { name: string }[];
-if (!batchResultColumns.some((column) => column.name === "error")) {
-  db.exec("ALTER TABLE batch_results ADD COLUMN error TEXT");
-}
+// Opens the database (default .data/jobs.db, or JOB_AGENT_DB_PATH) and applies
+// any pending schema migrations — see lib/migrate.ts and lib/migrations/.
+const db = openDatabase(resolveDbPath());
 
 // ── Seen Jobs ────────────────────────────────────────────────
 
