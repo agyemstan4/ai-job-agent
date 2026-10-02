@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { fetch as undiciFetch, Agent } from "undici";
+
+const longTimeoutAgent = new Agent({
+  headersTimeout: 600000,
+  bodyTimeout: 600000,
+});
 
 export async function POST(req: Request) {
   try {
     const { candidate, job, questions } = await req.json();
-
-    console.log("PROJECTS RECEIVED:", JSON.stringify(candidate.projects, null, 2));
 
     if (!candidate || !job || !Array.isArray(questions) || questions.length === 0) {
       return NextResponse.json(
@@ -17,28 +21,48 @@ export async function POST(req: Request) {
       .map((q: string, i: number) => `${i + 1}. ${q}`)
       .join("\n");
 
-    // Build project entries: use description if available, fall back to skills list only
+    // Build project entries using the bullets array (projects schema
+    // moved from a single "description" string to "bullets": [] earlier
+    // today — using the old field name here meant every project was
+    // silently falling back to skills-only, with no real detail).
     const projectsText = (candidate.projects || [])
       .map((p: any) => {
         const skills = Array.isArray(p.skillsUsed) ? p.skillsUsed.join(", ") : (p.skillsUsed || "");
-        if (p.description) {
-          return `- ${p.name} (${skills}): ${p.description}`;
+        const bullets = Array.isArray(p.bullets) ? p.bullets.join("; ") : "";
+        if (bullets) {
+          return `- ${p.name} (${skills}): ${bullets}`;
         }
         return `- ${p.name} (${skills})`;
       })
       .join("\n");
 
+    const educationText = Array.isArray(candidate.education)
+      ? candidate.education
+          .map((e: any) => `${e.degree || ""}${e.institution ? ` — ${e.institution}` : ""}`)
+          .join("; ")
+      : "";
+
+    // The real field from extract-cv-structured is "experience", not
+    // "workExperience", and its objects use title/company/dates/bullets —
+    // not role/company/duration. This mapping never matched the actual
+    // data shape, so Experience has always rendered blank here.
+    const experienceText = (candidate.experience || [])
+      .map((e: any) => {
+        const company = e.company ? ` at ${e.company}` : "";
+        const bullets = Array.isArray(e.bullets) ? e.bullets.join("; ") : "";
+        return `${e.title || ""}${company} (${e.dates || ""})${bullets ? `: ${bullets}` : ""}`;
+      })
+      .join(" | ") || candidate.experienceLevel || "";
+
     const prompt = `You are helping a job candidate answer application questions honestly and specifically, using only facts about them provided below.
 
 CANDIDATE:
 Name: ${candidate.name || "Stanley Sarfo Peprah"}
-Education: ${candidate.education || ""}
+Education: ${educationText}
 Skills: ${(candidate.technicalSkills || []).join(", ")}
 Projects:
 ${projectsText}
-Experience: ${(candidate.workExperience || [])
-      .map((e: any) => `${e.role} at ${e.company} (${e.duration || ""})`)
-      .join(" | ") || candidate.experienceLevel || ""}
+Experience: ${experienceText}
 
 JOB:
 Title: ${job.title}
@@ -67,12 +91,12 @@ Return ONLY valid JSON in this exact format, with one object per question, in th
 ]
 
 Do not include markdown. Do not explain your answer.`;
-
-    const ollamaResponse = await fetch("http://localhost:11434/api/generate", {
+const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      dispatcher: longTimeoutAgent,
       body: JSON.stringify({
-        model: "mistral",
+        model: "llama3.2:3b",
         prompt,
         stream: false,
         format: "json",
@@ -88,7 +112,7 @@ Do not include markdown. Do not explain your answer.`;
       throw new Error(`Ollama error: ${ollamaResponse.status}`);
     }
 
-    const response = await ollamaResponse.json();
+    const response = (await ollamaResponse.json()) as { response: string };
 
     let answers;
     try {

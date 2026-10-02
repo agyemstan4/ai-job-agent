@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { filterNewJobs, markJobsSeen } from "@/lib/db";
 
 export async function POST(req: Request) {
   try {
@@ -7,10 +8,6 @@ export async function POST(req: Request) {
     const appId = process.env.ADZUNA_APP_ID;
     const appKey = process.env.ADZUNA_APP_KEY;
     const reedKey = process.env.REED_API_KEY;
-
-    console.log("APP ID:", appId);
-    console.log("APP KEY:", appKey ? "Exists" : "Missing");
-    console.log("REED KEY:", reedKey ? "Exists" : "Missing");
 
     if (!appId || !appKey) {
       return NextResponse.json(
@@ -31,25 +28,21 @@ export async function POST(req: Request) {
       ])
     );
 
-    // ── Adzuna ────────────────────────────────────────────────────────────────
+    // ── Adzuna ──────────────────────────────────────────────────────────────
     const fetchAdzuna = async () => {
-      let allJobs: any[] = [];
-
-      for (const term of searchTerms) {
+      const fetches = searchTerms.map(async (term) => {
         const url = `https://api.adzuna.com/v1/api/jobs/gb/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=20&what=${encodeURIComponent(term)}&where=${encodeURIComponent(location)}`;
         const response = await fetch(url);
-        const text = await response.text();
-
-        console.log("ADZUNA SEARCH:", term, "STATUS:", response.status);
-
         if (!response.ok) {
-          console.log("Adzuna failed:", text);
-          continue;
+          console.log("Adzuna failed:", term, response.status);
+          return [];
         }
+        const data = await response.json();
+        return data.results || [];
+      });
 
-        const data = JSON.parse(text);
-        allJobs.push(...data.results);
-      }
+      const results = await Promise.all(fetches);
+      const allJobs = results.flat();
 
       return allJobs.map((job: any) => ({
         id: `adzuna_${job.id || job.redirect_url}`,
@@ -66,34 +59,27 @@ export async function POST(req: Request) {
       }));
     };
 
-    // ── Reed ──────────────────────────────────────────────────────────────────
+    // ── Reed ────────────────────────────────────────────────────────────────
     const fetchReed = async () => {
-      if (!reedKey) {
-        console.log("REED KEY missing — skipping Reed");
-        return [];
-      }
+      if (!reedKey) return [];
 
-      let allJobs: any[] = [];
-
-      for (const term of searchTerms) {
+      const fetches = searchTerms.map(async (term) => {
         const url = `https://www.reed.co.uk/api/1.0/search?keywords=${encodeURIComponent(term)}&location=${encodeURIComponent(location)}&resultsToTake=20`;
-
         const response = await fetch(url, {
           headers: {
             Authorization: `Basic ${Buffer.from(reedKey + ":").toString("base64")}`,
           },
         });
-
-        console.log("REED SEARCH:", term, "STATUS:", response.status);
-
         if (!response.ok) {
-          console.log("Reed failed:", await response.text());
-          continue;
+          console.log("Reed failed:", term, response.status);
+          return [];
         }
-
         const data = await response.json();
-        allJobs.push(...(data.results || []));
-      }
+        return data.results || [];
+      });
+
+      const results = await Promise.all(fetches);
+      const allJobs = results.flat();
 
       return allJobs.map((job: any) => ({
         id: `reed_${job.jobId}`,
@@ -110,27 +96,30 @@ export async function POST(req: Request) {
       }));
     };
 
-    // ── Merge ─────────────────────────────────────────────────────────────────
+    // ── Fetch both APIs in parallel ──────────────────────────────────────────
     console.log("Fetching from Adzuna and Reed in parallel...");
     const [adzunaJobs, reedJobs] = await Promise.all([fetchAdzuna(), fetchReed()]);
-
     const allJobs = [...adzunaJobs, ...reedJobs];
-
     console.log("TOTAL RAW JOBS:", allJobs.length);
-    console.log("  Adzuna:", adzunaJobs.length);
-    console.log("  Reed:", reedJobs.length);
 
-    // Deduplicate by title+company
-    const uniqueJobs = Array.from(
+    // ── Deduplicate by title+company within this batch ───────────────────────
+    const withinBatchUnique = Array.from(
       new Map(
         allJobs.map((job) => [`${job.title}-${job.company}`, job])
       ).values()
     );
+    console.log("UNIQUE (this batch):", withinBatchUnique.length);
 
-    console.log("UNIQUE JOBS:", uniqueJobs.length);
+    // ── Deduplicate against DB — filter out already-seen job IDs ────────────
+    const newJobs = filterNewJobs(withinBatchUnique);
+    console.log("NEW (not seen before):", newJobs.length);
 
-    return NextResponse.json(uniqueJobs);
+    // Mark all new jobs as seen immediately so they won't appear in the next run
+    if (newJobs.length > 0) {
+      markJobsSeen(newJobs.map((j) => j.id));
+    }
 
+    return NextResponse.json(newJobs);
   } catch (error) {
     console.error(error);
     return NextResponse.json(

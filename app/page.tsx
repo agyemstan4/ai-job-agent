@@ -16,6 +16,11 @@ export default function Home() {
   const [coverLetters, setCoverLetters] = useState<Record<number, string>>({});
   const [generatingCoverLetter, setGeneratingCoverLetter] = useState<Record<number, boolean>>({});
   const [selectedRoles, setSelectedRoles] = useState<string[]>(["Junior Software Engineer"]);
+  const [batchCount, setBatchCount] = useState(3);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState("");
+  const [batchResults, setBatchResults] = useState<any[]>([]);
+
 
   const roles = [
     "Junior Software Engineer",
@@ -46,11 +51,6 @@ export default function Home() {
   async function generateCoverLetter(job: any, index: number) {
     setGeneratingCoverLetter((prev) => ({ ...prev, [index]: true }));
     try {
-      // analysis (from analyse-cv) no longer carries education/projects —
-      // those were trimmed from that schema earlier. structuredCV (from
-      // extract-cv-structured + extract-projects) still has real data for
-      // both, so merge it in here rather than let the cover letter
-      // silently generate with "undefined" degree / no project detail.
       const candidateForCoverLetter = {
         ...analysis,
         education: structuredCV?.education || [],
@@ -91,44 +91,25 @@ export default function Home() {
       formData.append("cv", selectedFile);
       formData.append("roles", JSON.stringify(selectedRoles));
 
-      // Run CV analysis, structured extraction, and project extraction in
-      // parallel. Projects are extracted separately (rather than as part
-      // of extract-cv-structured) because asking the model to fully
-      // preserve multi-bullet project detail alongside everything else in
-      // one call led to it condensing/summarising projects down to one
-      // line each — a dedicated, narrowly-scoped call gets much better
-      // bullet preservation.
       setLoadingStep("🤖 Analysing your CV...");
-      const [analysisResponse, extractionResponse, projectsResponse] = await Promise.all([
-        fetch("/api/analyse-cv", { method: "POST", body: formData }),
-        fetch("/api/extract-cv-structured", { method: "POST", body: formData }),
-        fetch("/api/extract-projects", { method: "POST", body: formData }),
-      ]);
+const combinedResponse = await fetch("/api/analyse-and-extract", {
+  method: "POST",
+  body: formData,
+});
 
-      const analysisData = await analysisResponse.json();
-      const extractionData = await extractionResponse.json();
-      const projectsData = await projectsResponse.json();
+const combinedData = await combinedResponse.json();
 
-      if (!analysisResponse.ok) {
-        throw new Error(analysisData.details || analysisData.error || "Analysis failed.");
-      }
+if (!combinedResponse.ok) {
+  throw new Error(combinedData.details || combinedData.error || "Analysis failed.");
+}
 
-      const candidateAnalysis =
-        typeof analysisData.analysis === "string"
-          ? JSON.parse(analysisData.analysis)
-          : analysisData.analysis;
+const candidateAnalysis = combinedData.analysis;
+setAnalysis(candidateAnalysis);
 
-      setAnalysis(candidateAnalysis);
-
-      if (extractionResponse.ok && extractionData.structuredCV) {
-        const mergedStructuredCV = {
-          ...extractionData.structuredCV,
-          projects: projectsResponse.ok && Array.isArray(projectsData.projects)
-            ? projectsData.projects
-            : [],
-        };
-        setStructuredCV(mergedStructuredCV);
-      }
+if (combinedData.structuredCV) {
+  setStructuredCV(combinedData.structuredCV);
+}
+      
 
       setLoadingStep("🔍 Finding suitable jobs...");
 
@@ -174,6 +155,121 @@ export default function Home() {
     } finally {
       setLoading(false);
       setLoadingStep("");
+    }
+  }
+  
+
+  async function runBatchApply() {
+    if (!structuredCV || !matches || matches.length === 0) {
+      alert("Please run 'Find Suitable Jobs' first.");
+      return;
+      
+    }
+
+
+    
+    setBatchRunning(true);
+    setBatchResults([]);
+
+    const jobsToProcess = matches.slice(0, batchCount);
+    const results: any[] = [];
+
+    for (let i = 0; i < jobsToProcess.length; i++) {
+      const job = jobsToProcess[i];
+      setBatchProgress(`Processing ${i + 1} of ${jobsToProcess.length}: ${job.title} at ${job.company}`);
+
+      const result: any = { job, success: false };
+
+      try {
+        const tailorResponse = await fetch("/api/tailor-cv", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            structuredCV,
+            job: {
+              title: job.title,
+              company: job.company,
+              description: job.description || "",
+            },
+          }),
+        });
+        const tailorData = await tailorResponse.json();
+        if (!tailorResponse.ok) {
+          throw new Error(tailorData.details || tailorData.error || "Tailoring failed.");
+        }
+
+        const docxResponse = await fetch("/api/generate-cv-docx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tailoredCV: tailorData.tailoredCV, job }),
+        });
+        if (!docxResponse.ok) {
+          const errData = await docxResponse.json();
+          throw new Error(errData.details || errData.error || "Document generation failed.");
+        }
+        const blob = await docxResponse.blob();
+        result.cvUrl = window.URL.createObjectURL(blob);
+        const safeCompany = (job.company || "Company").replace(/\s+/g, "_");
+        result.cvFileName = `${(structuredCV.name || "CV").replace(/\s+/g, "_")}_${safeCompany}_CV.pdf`;
+
+        const candidateForCoverLetter = {
+          ...analysis,
+          education: structuredCV?.education || [],
+          projects: structuredCV?.projects || [],
+        };
+        const coverResponse = await fetch("/api/cover-letter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candidate: candidateForCoverLetter, job }),
+        });
+        const coverData = await coverResponse.json();
+        result.coverLetter = coverData.coverLetter || "";
+
+        result.success = true;
+      } catch (error) {
+        result.error = error instanceof Error ? error.message : String(error);
+      }
+
+      results.push(result);
+      setBatchResults([...results]);
+    }
+
+    setBatchRunning(false);
+    setBatchProgress("");
+
+    // Save completed batch to DB so results survive page refresh
+    try {
+      const toSave = await Promise.all(
+        results.map(async (r) => {
+          let cvBase64: string | undefined;
+          if (r.cvUrl) {
+            const blob = await fetch(r.cvUrl).then((res) => res.blob());
+            const buffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            cvBase64 = btoa(binary);
+          }
+          return {
+            job: r.job,
+            coverLetter: r.coverLetter,
+            cvBase64,
+            cvFilename: r.cvFileName,
+            success: r.success,
+            error: r.error,
+          };
+        })
+      );
+
+      await fetch("/api/batch-results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ results: toSave }),
+      });
+    } catch (err) {
+      console.error("Failed to persist batch results:", err);
     }
   }
 
@@ -254,10 +350,17 @@ export default function Home() {
     setAnsweringQuestions((prev) => ({ ...prev, [index]: true }));
 
     try {
+      const candidateForQuestions = {
+        ...analysis,
+        education: structuredCV?.education || [],
+        projects: structuredCV?.projects || [],
+        experience: structuredCV?.experience || [],
+      };
+
       const response = await fetch("/api/application-questions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate: analysis, job, questions }),
+        body: JSON.stringify({ candidate: candidateForQuestions, job, questions }),
       });
 
       const data = await response.json();
@@ -279,7 +382,12 @@ export default function Home() {
     <main className="min-h-screen bg-gray-100 p-8">
       <div className="mx-auto max-w-6xl">
 
-        <h1 className="text-4xl font-bold text-gray-900">AI Job Agent</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-4xl font-bold text-gray-900">AI Job Agent</h1>
+          <a href="/review" className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700">
+            📋 Review Queue
+          </a>
+        </div>
         <p className="mt-2 text-gray-600">
           Upload your CV and let AI analyse it for suitable software jobs.
         </p>
@@ -417,6 +525,69 @@ export default function Home() {
                 <h2 className="text-3xl font-bold">🎯 Best Job Matches</h2>
                 <p className="mt-2 text-gray-600">Ranked by AI based on your CV.</p>
 
+                {/* Batch Apply Bar */}
+                <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-gray-50 p-4">
+                  <label className="text-sm font-semibold text-gray-700">
+                    Batch apply to top
+                  </label>
+                  <select
+                    value={batchCount}
+                    onChange={(e) => setBatchCount(Number(e.target.value))}
+                    disabled={batchRunning}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    {[1, 2, 3, 5, matches.length]
+                      .filter((n, i, arr) => n <= matches.length && arr.indexOf(n) === i)
+                      .map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                  </select>
+                  <span className="text-sm text-gray-600">matches</span>
+                  <button
+                    onClick={runBatchApply}
+                    disabled={batchRunning}
+                    className="rounded-lg bg-emerald-600 px-5 py-2 font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {batchRunning ? batchProgress || "Running..." : "🚀 Batch Apply"}
+                  </button>
+                </div>
+
+                {/* Batch Results */}
+                {batchResults.length > 0 && (
+                  <div className="mt-6 space-y-4">
+                    <h3 className="text-xl font-semibold">Batch Results — review before using</h3>
+                    <p className="text-sm text-gray-600">
+                      These are drafts. Read each one before sending — especially any cover letter describing a specific story.
+                    </p>
+                    {batchResults.map((result: any, i: number) => (
+                      <div key={i} className="rounded-xl border border-gray-200 p-4">
+                        <p className="font-semibold text-gray-900">
+                          {result.job.title} — {result.job.company}
+                        </p>
+                        {result.success ? (
+                          <>
+                            <a
+                              href={result.cvUrl}
+                              download={result.cvFileName}
+                              className="mt-2 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                            >
+                              Download Tailored CV
+                            </a>
+                            {result.coverLetter && (
+                              <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700 whitespace-pre-wrap">
+                                {result.coverLetter}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="mt-2 text-sm text-red-600">Failed: {result.error}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Individual Job Cards */}
                 <div className="mt-6 space-y-6">
                   {matches.map((job: any, index: number) => (
                     <div

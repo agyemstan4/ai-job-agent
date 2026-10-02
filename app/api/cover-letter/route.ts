@@ -41,7 +41,7 @@ NEVER start with "I am writing to" or "I would like to apply". Start with someth
       headers: { "Content-Type": "application/json" },
       dispatcher: longTimeoutAgent,
       body: JSON.stringify({
-        model: "mistral",
+       model: "llama3.2:3b",
         prompt,
         stream: false,
         options: {

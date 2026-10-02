@@ -111,6 +111,23 @@ export async function POST(req: Request) {
   try {
     const { candidate, jobs } = await req.json();
 
+console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length);
+
+console.log(
+  "🔍 CANDIDATE SKILLS:",
+  candidate.technicalSkills
+);
+
+console.log(
+  "🔍 FIRST 3 JOBS:",
+  jobs.slice(0, 3).map((job: any) => ({
+    title: job.title,
+    company: job.company,
+    description: job.description?.slice(0, 300),
+  }))
+);
+
+
     const roleKeywords = [
       "software engineer", "software developer", "developer", "engineer",
       "frontend", "backend", "full stack", "full-stack", "android",
@@ -124,6 +141,16 @@ export async function POST(req: Request) {
     const seniorKeywords = [
       "senior", "lead", "principal", "staff", "architect", "manager", "director",
     ];
+
+console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length);
+console.log(
+  "🔍 FIRST 3 JOBS:",
+  jobs.slice(0, 3).map((job: any) => ({
+    title: job.title,
+    company: job.company,
+    description: job.description?.slice(0, 300),
+  }))
+);
 
     const filteredJobs = jobs.filter((job: any) => {
       const text = `${job.title} ${job.description}`.toLowerCase();
@@ -153,11 +180,21 @@ export async function POST(req: Request) {
       return scoreJob(b) - scoreJob(a);
     });
 
-    const selectedJobs = rankedJobs.slice(0, 5);
+    // We want to score enough jobs to eventually support
+// up to 10 applications per day.
+const MAX_JOBS_TO_SCORE = 10;
 
-    if (selectedJobs.length === 0) {
-      return NextResponse.json({ matches: [] });
-    }
+const selectedJobs = rankedJobs.slice(0, MAX_JOBS_TO_SCORE);
+
+console.log("🔎 FILTERED JOB COUNT:", filteredJobs.length);
+console.log("🔎 UNIQUE JOB COUNT:", uniqueFilteredJobs.length);
+console.log("🔎 RANKED JOB COUNT:", rankedJobs.length);
+console.log("🔎 SELECTED JOB COUNT:", selectedJobs.length);
+
+if (selectedJobs.length === 0) {
+  console.log("⚠️ NO JOBS SURVIVED MATCH FILTERING");
+  return NextResponse.json({ matches: [] });
+}
 
     console.log("Filtered jobs:", selectedJobs.map((job: any) => job.title));
 
@@ -185,10 +222,10 @@ Output JSON only. No explanation outside JSON.
   "strengths": [],
   "missingSkills": [{"skill": "Spring Boot", "importance": "medium"}],
   "breakdown": {
-    "technicalSkills": 80,
-    "experienceLevel": 60,
-    "projects": 70,
-    "growthPotential": 55
+    "technicalSkills": "<integer 0-100, unique to this job>",
+    "experienceLevel": "<integer 0-100, unique to this job>",
+    "projects": "<integer 0-100, unique to this job>",
+    "growthPotential": "<integer 0-100, unique to this job>"
   }
 }
 
@@ -198,13 +235,18 @@ Rules:
 - missingSkills must NOT include skills the candidate already has
 - reason max 20 words
 - jobNumber must be ${index + 1}
+- Every number in "breakdown" MUST be calculated specifically for THIS job based on the candidate's actual skills versus this job's actual requirements. Do NOT reuse the same numbers across different jobs — a stronger match should score higher, a weaker match should score lower.
+- "technicalSkills" = how many of the candidate's listed skills appear in this job's requirements, as a percentage.
+- "experienceLevel" = how well the candidate's experience level suits this specific job's seniority.
+- "projects" = how relevant the candidate's project background is to this specific job's domain.
+- "growthPotential" = realistic potential for growth in this specific role given the candidate's trajectory.
 `;
 
       const res = await fetch("http://localhost:11434/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "mistral",
+          model: "llama3.2:3b",
           prompt: jobPrompt,
           stream: false,
           format: "json",
@@ -232,12 +274,31 @@ Rules:
     };
 
     const ollamaStart = Date.now();
-    console.log("🤖 Calling Ollama in parallel...");
+console.log("🤖 Calling Ollama in parallel...");
 
-    const rawResults = [];
-for (let i = 0; i < selectedJobs.length; i++) {
-  const result = await callOllama(selectedJobs[i], i);
-  rawResults.push(result);
+console.log("📊 SELECTED JOB COUNT:", selectedJobs.length);
+
+const BATCH_SIZE = 5;
+const rawResults: any[] = [];
+
+for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
+  const batch = selectedJobs.slice(i, i + BATCH_SIZE);
+
+  console.log(
+    `🚀 Starting Ollama batch ${Math.floor(i / BATCH_SIZE) + 1} with ${batch.length} jobs`
+  );
+
+  const batchResults = await Promise.all(
+    batch.map((job: any, batchIndex: number) =>
+      callOllama(job, i + batchIndex)
+    )
+  );
+
+  rawResults.push(...batchResults.filter(Boolean));
+
+  console.log(
+    `✅ Finished Ollama batch ${Math.floor(i / BATCH_SIZE) + 1}`
+  );
 }
 
     console.log(
@@ -289,12 +350,20 @@ for (let i = 0; i < selectedJobs.length; i++) {
 
         console.log("BACKEND CORRECTED BREAKDOWN:", cleanBreakdown);
 
-        const finalMatchScore = Math.round(
-          cleanBreakdown.technicalSkills * 0.45 +
-          cleanBreakdown.experienceLevel * 0.20 +
-          cleanBreakdown.projects * 0.25 +
-          cleanBreakdown.growthPotential * 0.10
-        );
+        const modelScore = Math.min(100, Math.max(0, Number(result.matchScore) || 0));
+
+const breakdownScore = Math.round(
+  cleanBreakdown.technicalSkills * 0.45 +
+  cleanBreakdown.experienceLevel * 0.20 +
+  cleanBreakdown.projects * 0.25 +
+  cleanBreakdown.growthPotential * 0.10
+);
+
+// Blend the model's own holistic score with the breakdown-derived score,
+// weighted toward the model's score since it reasons about the full
+// picture, while the breakdown catches cases where the model's stated
+// score doesn't line up with its own stated skill/experience numbers.
+const finalMatchScore = Math.round(modelScore * 0.6 + breakdownScore * 0.4);
 
         return {
           title: job.title,
