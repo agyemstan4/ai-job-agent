@@ -2,6 +2,17 @@
 
 import { useState } from "react";
 
+// The CV route names the file (and picks .pdf or the .docx fallback) in its
+// Content-Disposition header; fall back to a PDF-style name if it's missing.
+function getDownloadFilename(response: Response, job: { company?: string }) {
+  const header = response.headers.get("Content-Disposition") || "";
+  const match = header.match(/filename="([^"]+)"/);
+  if (match) return match[1];
+  const isDocx = (response.headers.get("Content-Type") || "").includes("wordprocessingml");
+  const safeCompany = (job.company || "Company").replace(/[^\w-]+/g, "_");
+  return `CV_${safeCompany}.${isDocx ? "docx" : "pdf"}`;
+}
+
 export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [structuredCV, setStructuredCV] = useState<any>(null);
@@ -63,11 +74,17 @@ export default function Home() {
         body: JSON.stringify({ candidate: candidateForCoverLetter, job }),
       });
       const data = await response.json();
-      if (data.coverLetter) {
-        setCoverLetters((prev) => ({ ...prev, [index]: data.coverLetter }));
+      if (!response.ok || !data.coverLetter) {
+        throw new Error(data.details || data.error || "Cover letter generation failed.");
       }
+      setCoverLetters((prev) => ({ ...prev, [index]: data.coverLetter }));
     } catch (error) {
       console.error("Cover letter error:", error);
+      alert(
+        `Something went wrong generating the cover letter.\n\n${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     } finally {
       setGeneratingCoverLetter((prev) => ({ ...prev, [index]: false }));
     }
@@ -121,12 +138,18 @@ if (combinedData.structuredCV) {
 
       const jobsData = await jobsResponse.json();
 
-      if (!Array.isArray(jobsData)) {
+      if (!jobsResponse.ok || !Array.isArray(jobsData)) {
         console.error("Jobs API failed:", jobsData);
-        return;
+        throw new Error(
+          `Job search failed: ${jobsData?.details || jobsData?.error || jobsResponse.status}`
+        );
       }
 
       const jobs = jobsData.map((job: any) => ({
+        // id/sourceIds let /api/match mark jobs as seen once they're scored.
+        id: job.id,
+        sourceIds: job.sourceIds,
+        source: job.source,
         title: job.title,
         company: job.company,
         location: job.location,
@@ -147,11 +170,22 @@ if (combinedData.structuredCV) {
       });
 
       const matchResults = await matchResponse.json();
+
+      if (!matchResponse.ok || !Array.isArray(matchResults.matches)) {
+        throw new Error(
+          `Job matching failed: ${matchResults?.details || matchResults?.error || matchResponse.status}`
+        );
+      }
+
       setMatches(matchResults.matches);
 
     } catch (error) {
       console.error(error);
-      alert("Something went wrong while analysing your CV.");
+      alert(
+        `Something went wrong while analysing your CV.\n\n${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     } finally {
       setLoading(false);
       setLoadingStep("");
@@ -209,8 +243,8 @@ if (combinedData.structuredCV) {
         }
         const blob = await docxResponse.blob();
         result.cvUrl = window.URL.createObjectURL(blob);
-        const safeCompany = (job.company || "Company").replace(/\s+/g, "_");
-        result.cvFileName = `${(structuredCV.name || "CV").replace(/\s+/g, "_")}_${safeCompany}_CV.pdf`;
+        // Use the server's filename: it's .docx when PDF conversion fell back.
+        result.cvFileName = getDownloadFilename(docxResponse, job);
 
         const candidateForCoverLetter = {
           ...analysis,
@@ -224,6 +258,14 @@ if (combinedData.structuredCV) {
         });
         const coverData = await coverResponse.json();
         result.coverLetter = coverData.coverLetter || "";
+
+        // The tailored CV is still usable, so the result stays successful,
+        // but the cover-letter failure is recorded instead of silently dropped.
+        if (!coverResponse.ok || !coverData.coverLetter) {
+          result.error = `Cover letter failed: ${
+            coverData.details || coverData.error || coverResponse.status
+          }`;
+        }
 
         result.success = true;
       } catch (error) {
@@ -263,13 +305,22 @@ if (combinedData.structuredCV) {
         })
       );
 
-      await fetch("/api/batch-results", {
+      const saveResponse = await fetch("/api/batch-results", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ results: toSave }),
       });
+      if (!saveResponse.ok) {
+        const saveData = await saveResponse.json().catch(() => ({}));
+        throw new Error(saveData.error || `HTTP ${saveResponse.status}`);
+      }
     } catch (err) {
       console.error("Failed to persist batch results:", err);
+      alert(
+        `The batch finished but could not be saved to the Review Queue.\n\n${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
     }
   }
 
@@ -304,7 +355,7 @@ if (combinedData.structuredCV) {
       const docxResponse = await fetch("/api/generate-cv-docx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tailoredCV: tailorData.tailoredCV }),
+        body: JSON.stringify({ tailoredCV: tailorData.tailoredCV, job }),
       });
 
       if (!docxResponse.ok) {
@@ -316,15 +367,18 @@ if (combinedData.structuredCV) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const safeCompany = (job.company || "Company").replace(/\s+/g, "_");
-      a.download = `${(structuredCV.name || "CV").replace(/\s+/g, "_")}_${safeCompany}_CV.pdf`;
+      a.download = getDownloadFilename(docxResponse, job);
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error(error);
-      alert("Something went wrong generating the tailored CV. Check console.");
+      alert(
+        `Something went wrong generating the tailored CV.\n\n${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     } finally {
       setTailoringJob((prev) => ({ ...prev, [index]: false }));
     }
@@ -372,7 +426,11 @@ if (combinedData.structuredCV) {
       setQuestionAnswers((prev) => ({ ...prev, [index]: data.answers }));
     } catch (error) {
       console.error(error);
-      alert("Something went wrong answering the questions. Check console.");
+      alert(
+        `Something went wrong answering the questions.\n\n${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     } finally {
       setAnsweringQuestions((prev) => ({ ...prev, [index]: false }));
     }
@@ -448,9 +506,13 @@ if (combinedData.structuredCV) {
             <h2 className="text-2xl font-semibold">AI Analysis</h2>
 
             <h3 className="mt-6 text-xl font-semibold">Candidate Match Score</h3>
-            <p className="mt-2 text-3xl font-bold">{analysis.matchScore ?? "N/A"}%</p>
+            <p className="mt-2 text-3xl font-bold">
+              {typeof analysis.matchScore === "number" ? `${analysis.matchScore}%` : "N/A"}
+            </p>
             <p className="mt-2 font-semibold">
-              {analysis.matchScore >= 90
+              {typeof analysis.matchScore !== "number"
+                ? "No score — the AI did not return a valid score"
+                : analysis.matchScore >= 90
                 ? "🟢 Excellent Match"
                 : analysis.matchScore >= 70
                 ? "🟢 Strong Match"
@@ -519,6 +581,13 @@ if (combinedData.structuredCV) {
               )}
             </ul>
 
+            {matches && matches.length === 0 && (
+              <p className="mt-10 rounded-xl bg-yellow-50 p-4 text-yellow-800">
+                No new matching jobs found this time. Jobs that weren&apos;t scored stay
+                available for the next search.
+              </p>
+            )}
+
             {/* Job Cards */}
             {matches && matches.length > 0 && (
               <div className="mt-10">
@@ -577,6 +646,9 @@ if (combinedData.structuredCV) {
                               <div className="mt-3 rounded-lg bg-gray-50 p-3 text-sm text-gray-700 whitespace-pre-wrap">
                                 {result.coverLetter}
                               </div>
+                            )}
+                            {result.error && (
+                              <p className="mt-2 text-sm text-amber-700">⚠️ {result.error}</p>
                             )}
                           </>
                         ) : (

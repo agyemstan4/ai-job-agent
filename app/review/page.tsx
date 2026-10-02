@@ -20,12 +20,13 @@ type BatchResult = {
   status: "pending" | "approved" | "rejected" | "failed";
   reviewed_at: string;
   notes: string;
+  error: string | null;
 };
 
 export default function ReviewQueue() {
   const [results, setResults] = useState<BatchResult[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected">("pending");
+  const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected" | "failed">("pending");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editedCoverLetter, setEditedCoverLetter] = useState("");
   const [saving, setSaving] = useState<Record<number, boolean>>({});
@@ -55,11 +56,14 @@ export default function ReviewQueue() {
   async function updateStatus(id: number, status: "approved" | "rejected") {
     setSaving((prev) => ({ ...prev, [id]: true }));
     try {
-      await fetch(`/api/batch-results/${id}`, {
+      const res = await fetch(`/api/batch-results/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status, notes: notes[id] }),
       });
+      if (!res.ok) {
+        throw new Error(`Status update failed (HTTP ${res.status})`);
+      }
 
       // If approved, open the job URL so you can apply immediately
       if (status === "approved") {
@@ -72,6 +76,7 @@ export default function ReviewQueue() {
       await fetchResults();
     } catch (err) {
       console.error("Failed to update status:", err);
+      alert(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving((prev) => ({ ...prev, [id]: false }));
     }
@@ -80,15 +85,19 @@ export default function ReviewQueue() {
   async function saveCoverLetter(id: number) {
     setSaving((prev) => ({ ...prev, [id]: true }));
     try {
-      await fetch(`/api/batch-results/${id}`, {
+      const res = await fetch(`/api/batch-results/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ coverLetter: editedCoverLetter }),
       });
+      if (!res.ok) {
+        throw new Error(`Saving the cover letter failed (HTTP ${res.status})`);
+      }
       setEditingId(null);
       await fetchResults();
     } catch (err) {
       console.error("Failed to save cover letter:", err);
+      alert(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving((prev) => ({ ...prev, [id]: false }));
     }
@@ -125,7 +134,7 @@ export default function ReviewQueue() {
 
         {/* Filter Tabs */}
         <div className="mt-6 flex gap-2">
-          {(["pending", "approved", "rejected", "all"] as const).map((f) => (
+          {(["pending", "approved", "rejected", "failed", "all"] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -212,6 +221,12 @@ export default function ReviewQueue() {
                     </span>
                   </div>
                 </div>
+
+                {result.error && (
+                  <p className="mt-4 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">
+                    ⚠️ {result.error}
+                  </p>
+                )}
 
                 {/* CV Download */}
                 {result.cv_filename && (

@@ -1,4 +1,13 @@
 import { NextResponse } from "next/server";
+import { markJobsSeen } from "@/lib/db";
+
+// Returns a 0-100 integer, or null if the model gave no usable number.
+function parseScore(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(Math.min(100, Math.max(0, n)));
+}
 
 const aliases: Record<string, string[]> = {
   "full stack": ["full stack", "frontend", "backend", "node.js", "web development"],
@@ -138,9 +147,11 @@ console.log(
       (skill: string) => skill.toLowerCase()
     );
 
-    const seniorKeywords = [
-      "senior", "lead", "principal", "staff", "architect", "manager", "director",
-    ];
+    // Seniority is judged from the job TITLE only, on whole words. Matching
+    // substrings across the full description wrongly rejected junior roles
+    // (e.g. "leading", "our staff", "reporting to the engineering manager").
+    const seniorTitlePattern =
+      /\b(senior|lead|principal|staff|architect|manager|director)\b/i;
 
 console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length);
 console.log(
@@ -156,7 +167,7 @@ console.log(
       const text = `${job.title} ${job.description}`.toLowerCase();
       const hasDeveloperRole = roleKeywords.some(kw => text.includes(kw));
       const hasRelevantSkill = skillKeywords.some((skill: string) => text.includes(skill));
-      const isSenior = seniorKeywords.some(kw => text.includes(kw));
+      const isSenior = seniorTitlePattern.test(job.title || "");
       return hasDeveloperRole && hasRelevantSkill && !isSenior;
     });
 
@@ -211,7 +222,7 @@ CANDIDATE BACKGROUND: ${candidate.summary}
 EXPERIENCE LEVEL: ${candidate.experienceLevel}
 
 JOB: ${job.title} at ${job.company}
-REQUIRES: ${job.description.slice(0, 150)}
+REQUIRES: ${(job.description || "").slice(0, 150)}
 
 Output JSON only. No explanation outside JSON.
 
@@ -258,6 +269,10 @@ Rules:
         }),
       });
 
+      if (!res.ok) {
+        throw new Error(`Ollama error: ${res.status}`);
+      }
+
       const data = await res.json();
 
       try {
@@ -267,11 +282,23 @@ Rules:
         console.log(`✅ Job ${index + 1} (${job.title}) done`);
         console.log(`RAW:`, data.response);
         return { ...parsed, jobNumber: index + 1 };
-      } catch (e) {
+      } catch {
         console.error(`❌ Job ${index + 1} failed to parse`);
         return null;
       }
     };
+
+    // A failed call (Ollama down, timeout, HTTP error) only drops that job
+    // instead of rejecting the whole batch. Errors are kept so they can
+    // be reported if every call fails.
+    const ollamaErrors: string[] = [];
+    const safeCallOllama = (job: Parameters<typeof callOllama>[0], index: number) =>
+      callOllama(job, index).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        ollamaErrors.push(message);
+        console.error(`❌ Job ${index + 1} Ollama call failed:`, message);
+        return null;
+      });
 
     const ollamaStart = Date.now();
 console.log("🤖 Calling Ollama in parallel...");
@@ -290,7 +317,7 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
 
   const batchResults = await Promise.all(
     batch.map((job: any, batchIndex: number) =>
-      callOllama(job, i + batchIndex)
+      safeCallOllama(job, i + batchIndex)
     )
   );
 
@@ -309,6 +336,20 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
 
     console.log("AI RETURN:", scoredJobs);
     console.log("AI RETURN TYPE:", typeof scoredJobs);
+
+    if (scoredJobs.length === 0) {
+      // Nothing was scored, so nothing is marked as seen — these jobs remain
+      // eligible next time.
+      return NextResponse.json(
+        {
+          error: "AI scoring failed",
+          details: ollamaErrors.length > 0
+            ? `Ollama failed for ${ollamaErrors.length} of ${selectedJobs.length} jobs: ${ollamaErrors[0]}`
+            : "The AI model did not return any valid match scores.",
+        },
+        { status: 502 }
+      );
+    }
 
     // -----------------------------------------------
     // Build final matches with backend corrections
@@ -350,7 +391,18 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
 
         console.log("BACKEND CORRECTED BREAKDOWN:", cleanBreakdown);
 
-        const modelScore = Math.min(100, Math.max(0, Number(result.matchScore) || 0));
+        // A missing or non-numeric model score is NOT treated as 0 (which
+        // silently dragged the blended score down). If the model gave no
+        // usable score and no usable breakdown either, the job is left
+        // unscored and dropped from this run.
+        const modelScore = parseScore(result.matchScore);
+        const hasBreakdown = ["technicalSkills", "experienceLevel", "projects", "growthPotential"]
+          .some((key) => parseScore(result.breakdown?.[key]) !== null);
+
+        if (modelScore === null && !hasBreakdown) {
+          console.warn(`⚠️ Job ${result.jobNumber} (${job.title}) returned no usable score — skipped`);
+          return null;
+        }
 
 const breakdownScore = Math.round(
   cleanBreakdown.technicalSkills * 0.45 +
@@ -363,12 +415,21 @@ const breakdownScore = Math.round(
 // weighted toward the model's score since it reasons about the full
 // picture, while the breakdown catches cases where the model's stated
 // score doesn't line up with its own stated skill/experience numbers.
-const finalMatchScore = Math.round(modelScore * 0.6 + breakdownScore * 0.4);
+// If the model's own score is unusable, fall back to the breakdown alone.
+const finalMatchScore = modelScore === null
+  ? breakdownScore
+  : Math.round(modelScore * 0.6 + breakdownScore * 0.4);
 
         return {
+          id: job.id,
+          sourceIds: job.sourceIds,
+          source: job.source,
           title: job.title,
           company: job.company,
           location: job.location,
+          // Passed through so tailoring, cover letters and application
+          // answers see the real job description.
+          description: job.description || "",
           url: job.url,
           salaryMin: job.salaryMin,
           salaryMax: job.salaryMax,
@@ -414,7 +475,21 @@ const finalMatchScore = Math.round(modelScore * 0.6 + breakdownScore * 0.4);
             : [],
         };
       })
-      .filter(Boolean);
+      .filter((match): match is NonNullable<typeof match> => match !== null)
+      // Best match first — previously results kept the keyword-prefilter order.
+      .sort((a, b) => b.matchScore - a.matchScore);
+
+    // Mark only the jobs that were actually scored as seen (including any
+    // cross-source duplicate IDs). Jobs that were filtered out, not selected,
+    // or failed scoring stay eligible for future runs.
+    const scoredIds = matches.flatMap((match) =>
+      Array.isArray(match.sourceIds) && match.sourceIds.length > 0
+        ? match.sourceIds
+        : match.id ? [match.id] : []
+    );
+    if (scoredIds.length > 0) {
+      markJobsSeen(scoredIds);
+    }
 
     console.log("Finished scoring jobs.");
     console.log("FINAL MATCHES:", JSON.stringify(matches, null, 2));
@@ -424,6 +499,12 @@ const finalMatchScore = Math.round(modelScore * 0.6 + breakdownScore * 0.4);
 
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: "Matching failed" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Matching failed",
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
   }
 }

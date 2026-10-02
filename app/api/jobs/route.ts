@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { filterNewJobs, markJobsSeen } from "@/lib/db";
+import { filterNewJobs } from "@/lib/db";
 
 export async function POST(req: Request) {
   try {
@@ -15,6 +15,8 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
+
+    let failedRequests = 0;
 
     const searchTerms = Array.from(
       new Set([
@@ -32,9 +34,13 @@ export async function POST(req: Request) {
     const fetchAdzuna = async () => {
       const fetches = searchTerms.map(async (term) => {
         const url = `https://api.adzuna.com/v1/api/jobs/gb/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=20&what=${encodeURIComponent(term)}&where=${encodeURIComponent(location)}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-          console.log("Adzuna failed:", term, response.status);
+        const response = await fetch(url).catch((error) => {
+          console.log("Adzuna request error:", term, error);
+          return null;
+        });
+        if (!response || !response.ok) {
+          console.log("Adzuna failed:", term, response?.status);
+          failedRequests++;
           return [];
         }
         const data = await response.json();
@@ -69,9 +75,13 @@ export async function POST(req: Request) {
           headers: {
             Authorization: `Basic ${Buffer.from(reedKey + ":").toString("base64")}`,
           },
+        }).catch((error) => {
+          console.log("Reed request error:", term, error);
+          return null;
         });
-        if (!response.ok) {
-          console.log("Reed failed:", term, response.status);
+        if (!response || !response.ok) {
+          console.log("Reed failed:", term, response?.status);
+          failedRequests++;
           return [];
         }
         const data = await response.json();
@@ -102,23 +112,42 @@ export async function POST(req: Request) {
     const allJobs = [...adzunaJobs, ...reedJobs];
     console.log("TOTAL RAW JOBS:", allJobs.length);
 
+    if (allJobs.length === 0 && failedRequests > 0) {
+      return NextResponse.json(
+        {
+          error: "Failed to fetch jobs",
+          details: `All ${failedRequests} job source request(s) failed. Check the server logs.`,
+        },
+        { status: 502 }
+      );
+    }
+
     // ── Deduplicate by title+company within this batch ───────────────────────
-    const withinBatchUnique = Array.from(
-      new Map(
-        allJobs.map((job) => [`${job.title}-${job.company}`, job])
-      ).values()
-    );
+    // The last listing for a title+company wins (as before), but every source
+    // ID in the group is kept so the same job from another source (Adzuna vs
+    // Reed) is also recognised as seen in future runs.
+    const groups = new Map<string, { job: (typeof allJobs)[number]; sourceIds: string[] }>();
+    for (const job of allJobs) {
+      const key = `${job.title}-${job.company}`;
+      const sourceIds = [...(groups.get(key)?.sourceIds ?? []), job.id];
+      groups.set(key, { job, sourceIds: Array.from(new Set(sourceIds)) });
+    }
+    const withinBatchUnique = Array.from(groups.values()).map(({ job, sourceIds }) => ({
+      ...job,
+      sourceIds,
+    }));
     console.log("UNIQUE (this batch):", withinBatchUnique.length);
 
     // ── Deduplicate against DB — filter out already-seen job IDs ────────────
-    const newJobs = filterNewJobs(withinBatchUnique);
+    // A job is skipped if any of its source IDs has been seen before.
+    const newJobs = withinBatchUnique.filter(
+      (job) => filterNewJobs(job.sourceIds.map((id) => ({ id }))).length === job.sourceIds.length
+    );
     console.log("NEW (not seen before):", newJobs.length);
 
-    // Mark all new jobs as seen immediately so they won't appear in the next run
-    if (newJobs.length > 0) {
-      markJobsSeen(newJobs.map((j) => j.id));
-    }
-
+    // Jobs are NOT marked as seen here. /api/match marks them once they have
+    // actually been scored, so jobs that are fetched but never processed stay
+    // eligible for the next run.
     return NextResponse.json(newJobs);
   } catch (error) {
     console.error(error);

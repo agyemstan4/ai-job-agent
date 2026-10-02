@@ -44,6 +44,14 @@ const toArray = (value: any): any[] => {
   return [];
 };
 
+// Returns a 0-100 integer, or null if the model gave no usable number.
+const parseScore = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(Math.min(100, Math.max(0, n)));
+};
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -72,6 +80,11 @@ export async function POST(request: Request) {
         .map((l: string) => l.trim())
         .find((l: string) => l.length > 0) || "the candidate"
     );
+
+    const cvStatesFirstClass = /\b(first[- ]class|1st[- ]class)\b/i.test(cvText);
+    const degreeRule = cvStatesFirstClass
+      ? "- The candidate has graduated with a First-Class Honours degree, as stated in the CV. Do not describe the candidate as a student."
+      : "- Describe the candidate's education only as stated in the CV. Never invent a degree classification or graduation status.";
 
     console.time("Ollama-Combined");
 
@@ -129,9 +142,9 @@ Return ONLY valid JSON in this EXACT combined shape:
 }
 
 === RULES FOR "analysis" ===
-- The candidate has graduated with a First-Class Honours degree in Software Engineering. Do not describe the candidate as a student.
+${degreeRule}
 - Treat university and personal projects as genuine engineering experience.
-- "summary" must be 4-6 full sentences. Reference the candidate's degree classification, at least two named projects from the CV, and specific technologies actually used. Every sentence must contain a specific fact from this CV — no generic statements.
+- "summary" must be 4-6 full sentences. Reference the candidate's degree classification (only if the CV states one), at least two named projects from the CV, and specific technologies actually used. Every sentence must contain a specific fact from this CV — no generic statements.
 - "recommendation" must be 3-5 full sentences explaining, with specific reasoning, why the candidate fits (or doesn't fit) the selected roles, referencing specific skills or projects.
 - "technicalSkills": up to 15 actual named languages, frameworks, tools, databases and APIs — no categories.
 - "matchingSkills" and "missingSkills" must contain only concrete, named skills or technologies — e.g. "Kotlin", "REST APIs", "Spotify Web API". NEVER a category like "Full Stack", "Cloud Services", "backend experience", or "commercial experience".
@@ -220,7 +233,9 @@ const response = (await ollamaResponse.json()) as {
 
     // ---- Normalize analysis ----
     const analysis = parsed.analysis || {};
-    if (!analysis.matchScore) analysis.matchScore = 80;
+    // No fabricated default: a missing/invalid score is reported as null and
+    // the UI shows "No score" instead of a made-up 80.
+    analysis.matchScore = parseScore(analysis.matchScore);
     analysis.strengths = toArray(analysis.strengths);
     analysis.growthAreas = toArray(analysis.growthAreas);
     analysis.matchingSkills = toArray(analysis.matchingSkills);
@@ -229,7 +244,9 @@ const response = (await ollamaResponse.json()) as {
 
     // ---- Normalize structuredCV ----
     const structuredCV = parsed.structuredCV || {};
-    if (Array.isArray(structuredCV.education)) {
+    // Only restore a First-Class Honours label the model dropped if the CV
+    // itself actually states it — never add a classification that isn't there.
+    if (cvStatesFirstClass && Array.isArray(structuredCV.education)) {
       structuredCV.education = structuredCV.education.map((edu: any) => {
         const degree = edu.degree || "";
         const isUniversityDegree = /beng|bsc|msc|ba |bachelor|master/i.test(degree);

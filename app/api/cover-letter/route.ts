@@ -52,6 +52,10 @@ NEVER start with "I am writing to" or "I would like to apply". Start with someth
       }),
     });
 
+    if (!response.ok) {
+      throw new Error(`Ollama error: ${response.status}`);
+    }
+
     const data = (await response.json()) as { response?: string };
     const coverLetter = data.response?.trim();
 
@@ -75,7 +79,10 @@ NEVER start with "I am writing to" or "I would like to apply". Start with someth
   } catch (error) {
     console.error("Cover letter error:", error);
     return NextResponse.json(
-      { error: "Something went wrong" },
+      {
+        error: "Cover letter generation failed",
+        details: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }

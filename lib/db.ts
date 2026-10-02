@@ -42,7 +42,8 @@ db.exec(`
 
     status TEXT NOT NULL DEFAULT 'pending',
     reviewed_at TEXT,
-    notes TEXT
+    notes TEXT,
+    error TEXT
   );
 
   CREATE TABLE IF NOT EXISTS seen_jobs (
@@ -50,6 +51,14 @@ db.exec(`
     first_seen TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Databases created before the "error" column existed need it added.
+const batchResultColumns = db
+  .prepare("PRAGMA table_info(batch_results)")
+  .all() as { name: string }[];
+if (!batchResultColumns.some((column) => column.name === "error")) {
+  db.exec("ALTER TABLE batch_results ADD COLUMN error TEXT");
+}
 
 // ── Seen Jobs ────────────────────────────────────────────────
 
@@ -143,10 +152,10 @@ export function saveBatchResult(data: {
       `INSERT INTO batch_results (
         batch_run_id, job_title, job_company, job_location, job_url,
         job_salary_min, job_salary_max, job_contract_type,
-        match_score, match_reason, cover_letter, cv_file, cv_filename,
+        match_score, match_reason, cover_letter, cv_file, cv_filename, error,
         status
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?
       )`
     )
@@ -164,6 +173,7 @@ export function saveBatchResult(data: {
       data.coverLetter ?? null,
       data.cvBuffer ?? null,
       data.cvFilename ?? null,
+      data.error ?? null,
       data.success ? "pending" : "failed"
     );
   return result.lastInsertRowid as number;
@@ -176,7 +186,7 @@ export function getBatchResults(status?: string) {
         `SELECT id, batch_run_id, created_at, job_title, job_company,
                 job_location, job_url, job_salary_min, job_salary_max,
                 job_contract_type, match_score, match_reason,
-                cover_letter, cv_filename, status, reviewed_at, notes
+                cover_letter, cv_filename, status, reviewed_at, notes, error
          FROM batch_results
          WHERE status = ?
          ORDER BY created_at DESC`
@@ -188,7 +198,7 @@ export function getBatchResults(status?: string) {
       `SELECT id, batch_run_id, created_at, job_title, job_company,
               job_location, job_url, job_salary_min, job_salary_max,
               job_contract_type, match_score, match_reason,
-              cover_letter, cv_filename, status, reviewed_at, notes
+              cover_letter, cv_filename, status, reviewed_at, notes, error
        FROM batch_results
        ORDER BY created_at DESC`
     )

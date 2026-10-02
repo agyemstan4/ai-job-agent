@@ -43,6 +43,21 @@ function categoriseSkills(skills: string[]) {
   return result;
 }
 
+// ── File naming ───────────────────────────────────────────────────────────────
+// Header values must be plain ASCII; company names can contain characters
+// (en dashes, quotes, accents, emoji) that would break Content-Disposition.
+function safeFilenamePart(text: string) {
+  return (text || "")
+    .normalize("NFKD")
+    .replace(/[^\w\s.-]/g, "")
+    .trim()
+    .replace(/\s+/g, "_") || "Unknown";
+}
+
+function buildFileName(name: string | undefined, company: string, ext: "pdf" | "docx") {
+  return `${safeFilenamePart(name || "CV")}_${safeFilenamePart(company)}_CV.${ext}`;
+}
+
 // ── Style constants ───────────────────────────────────────────────────────────
 const FONT = "Calibri";
 const BLACK = "000000";
@@ -266,8 +281,7 @@ export async function POST(req: Request) {
     // Email PDF
     const jobTitle = job?.title || "Role";
     const jobCompany = job?.company || "Company";
-    const safeCompany = jobCompany.replace(/\s+/g, "_");
-    const fileName = `${(tailoredCV.name || "CV").replace(/\s+/g, "_")}_${safeCompany}_CV.pdf`;
+    const fileName = buildFileName(tailoredCV.name, jobCompany, "pdf");
 
     resend.emails.send({
       from: "onboarding@resend.dev",
@@ -301,7 +315,7 @@ export async function POST(req: Request) {
 async function sendDocxFallback(buffer: Buffer, tailoredCV: any, job: any) {
   const jobTitle = job?.title || "Role";
   const jobCompany = job?.company || "Company";
-  const fileName = `${(tailoredCV.name || "CV").replace(/\s+/g, "_")}_${jobCompany.replace(/\s+/g, "_")}_CV.docx`;
+  const fileName = buildFileName(tailoredCV.name, jobCompany, "docx");
 
   resend.emails.send({
     from: "onboarding@resend.dev",

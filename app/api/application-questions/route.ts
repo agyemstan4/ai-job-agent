@@ -84,11 +84,13 @@ CRITICAL — for "describe a time when...", "give an example of...", or any beha
 
 Do not use generic filler phrases like "I am a hard worker" without backing it up with something specific from the candidate's background.
 
-Return ONLY valid JSON in this exact format, with one object per question, in the same order as given:
+Return ONLY valid JSON in this exact format, with one object per question inside "answers", in the same order as given:
 
-[
-  { "question": "", "answer": "" }
-]
+{
+  "answers": [
+    { "question": "", "answer": "" }
+  ]
+}
 
 Do not include markdown. Do not explain your answer.`;
 const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", {
@@ -124,6 +126,10 @@ const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", 
         answers = parsed.answers;
       } else if (Array.isArray(parsed.questions)) {
         answers = parsed.questions;
+      } else if (typeof parsed?.answer === "string") {
+        // Ollama's JSON mode can only return an object, so the model
+        // sometimes returns a single bare { question, answer }.
+        answers = [parsed];
       } else {
         // Fallback: find the first array value in the object, whatever it's called
         const firstArray = Object.values(parsed).find((v) => Array.isArray(v));
@@ -133,6 +139,12 @@ const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", 
       console.error("JSON PARSE FAILED");
       console.error(response.response);
       throw new Error("Ollama returned invalid JSON");
+    }
+
+    if (answers.length === 0) {
+      console.error("NO ANSWERS IN MODEL OUTPUT");
+      console.error(response.response);
+      throw new Error("The AI model returned no answers. Please try again.");
     }
 
     return NextResponse.json({ success: true, answers });
