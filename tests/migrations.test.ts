@@ -24,6 +24,7 @@ import {
   freshDb,
   makeTempDir,
   quietly,
+  removeTempDir,
   seedSeenJobs,
   tableExists,
 } from "./helpers.ts";
@@ -139,7 +140,7 @@ describe("migration runner", () => {
     } finally {
       backup?.close();
       db.close();
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      removeTempDir(dir);
     }
   });
 
@@ -164,7 +165,7 @@ describe("migration runner", () => {
       assert.equal(count(db, "batch_results"), 1);
     } finally {
       db.close();
-      fs.rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -192,7 +193,7 @@ describe("migration runner", () => {
       assert.equal(count(db, "seen_jobs"), 3);
     } finally {
       db.close();
-      fs.rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 
@@ -235,7 +236,7 @@ describe("migration runner", () => {
     } finally {
       a.close();
       b.close();
-      fs.rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 });
@@ -293,7 +294,7 @@ describe("v3 → v4 upgrade", () => {
       assert.equal(beginSubmission(db, app.id, { method: "manual" }).status, "submitting");
     } finally {
       db.close();
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      removeTempDir(dir);
     }
   });
 });
@@ -340,7 +341,7 @@ describe("JOB_AGENT_DB_PATH end to end", () => {
       const realAfter = fs.existsSync(realDb) ? fs.statSync(realDb).mtimeMs : null;
       assert.equal(realAfter, realBefore);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      removeTempDir(dir);
     }
   });
 });
@@ -376,7 +377,7 @@ describe("multi-process concurrency", () => {
         backup.close();
       }
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      removeTempDir(dir);
     }
   });
 });

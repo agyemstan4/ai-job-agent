@@ -11,10 +11,25 @@ export function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "job-agent-test-"));
 }
 
+/**
+ * On Windows a just-closed database file can stay locked for a while (e.g. by
+ * a virus scanner), making removal fail with EPERM/EBUSY. rmSync retries; if
+ * the directory is still locked it is left in the OS temp directory rather
+ * than failing a test whose assertions all passed.
+ */
+export function removeTempDir(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "EBUSY") throw error;
+  }
+}
+
 function closer(dbs: () => DB[], dir: string) {
   return () => {
     for (const db of dbs()) if (db.open) db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   };
 }
 

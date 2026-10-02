@@ -1,8 +1,7 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { TestDb } from "./helpers.ts";
-import { count, createLegacyDbFile, freshDb, makeTempDir, quietly, seedSeenJobs } from "./helpers.ts";
-import fs from "node:fs";
+import { count, createLegacyDbFile, freshDb, makeTempDir, quietly, removeTempDir, seedSeenJobs } from "./helpers.ts";
 import type { SaveCvAnalysisInput } from "../lib/pipeline/cv.ts";
 import { saveCvAnalysis } from "../lib/pipeline/cv.ts";
 import { openDatabase } from "../lib/database.ts";
@@ -259,7 +258,7 @@ describe("saveCvAnalysis: existing data", () => {
         db.close();
       }
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 });

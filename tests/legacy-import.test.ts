@@ -1,6 +1,5 @@
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import { openDatabase } from "../lib/database.ts";
 import { importLegacyBatches } from "../lib/migrations/003_import_legacy_batches.ts";
 import type { DB } from "../lib/repositories/shared.ts";
@@ -14,7 +13,7 @@ import {
   listApplicationEvents,
   transitionApplication,
 } from "../lib/repositories/applications.ts";
-import { count, createLegacyDbFile, makeTempDir, quietly, seedSeenJobs } from "./helpers.ts";
+import { count, createLegacyDbFile, makeTempDir, quietly, removeTempDir, seedSeenJobs } from "./helpers.ts";
 
 const PDF = Buffer.from("%PDF-1.4 synthetic tailored cv");
 const DOCX = Buffer.from("PK synthetic docx tailored cv");
@@ -86,7 +85,7 @@ describe("003 legacy batch import", () => {
 
   after(() => {
     db.close();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   });
 
   test("leaves every legacy table and row untouched", () => {
