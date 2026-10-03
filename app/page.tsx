@@ -21,6 +21,8 @@ export default function Home() {
   const [questionAnswers, setQuestionAnswers] = useState<Record<number, { question: string; answer: string }[]>>({});
   const [answeringQuestions, setAnsweringQuestions] = useState<Record<number, boolean>>({});
   const [analysis, setAnalysis] = useState<any>(null);
+  // The stored profile version the analysis belongs to (null if not saved).
+  const [candidateProfileId, setCandidateProfileId] = useState<number | null>(null);
   const [matches, setMatches] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
@@ -99,6 +101,7 @@ export default function Home() {
     setLoading(true);
     setLoadingStep("📄 Reading your CV...");
     setAnalysis(null);
+    setCandidateProfileId(null);
     setMatches(null);
     setStructuredCV(null);
     setCoverLetters({});
@@ -124,6 +127,7 @@ const candidateAnalysis = combinedData.analysis;
 setAnalysis(candidateAnalysis);
 const profileId: number | null =
   typeof combinedData.candidateProfileId === "number" ? combinedData.candidateProfileId : null;
+setCandidateProfileId(profileId);
 
 if (combinedData.structuredCV) {
   setStructuredCV(combinedData.structuredCV);
@@ -235,6 +239,7 @@ if (combinedData.structuredCV) {
         if (!tailorResponse.ok) {
           throw new Error(tailorData.details || tailorData.error || "Tailoring failed.");
         }
+        result.tailoredCV = tailorData.tailoredCV;
 
         const docxResponse = await fetch("/api/generate-cv-docx", {
           method: "POST",
@@ -303,6 +308,7 @@ if (combinedData.structuredCV) {
             coverLetter: r.coverLetter,
             cvBase64,
             cvFilename: r.cvFileName,
+            tailoredCV: r.tailoredCV,
             success: r.success,
             error: r.error,
           };
@@ -312,7 +318,7 @@ if (combinedData.structuredCV) {
       const saveResponse = await fetch("/api/batch-results", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ results: toSave }),
+        body: JSON.stringify({ results: toSave, candidateProfileId }),
       });
       if (!saveResponse.ok) {
         const saveData = await saveResponse.json().catch(() => ({}));

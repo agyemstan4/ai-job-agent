@@ -309,6 +309,8 @@ export function createApplication(
     status?: "preparing" | "ready_for_review";
     notes?: string | null;
     actor?: Exclude<Actor, "user">;
+    /** Stored on the (append-only) creation event, e.g. where the application came from. */
+    eventPayload?: unknown;
   }
 ): Application {
   return db.transaction(() => {
@@ -342,6 +344,7 @@ export function createApplication(
       toStatus: status,
       actor: input.actor ?? "system",
       detail: "Application created",
+      payload: input.eventPayload,
     });
     return getApplication(db, id)!;
   })();

@@ -2,31 +2,22 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import type { ReviewItem } from "@/lib/repositories/review";
 
-type BatchResult = {
-  id: number;
-  batch_run_id: number;
-  created_at: string;
-  job_title: string;
-  job_company: string;
-  job_location: string;
-  job_url: string;
-  job_salary_min: number;
-  job_salary_max: number;
-  match_score: number;
-  match_reason: string;
-  cover_letter: string;
-  cv_filename: string;
-  status: "pending" | "approved" | "rejected" | "failed";
-  reviewed_at: string;
-  notes: string;
-  error: string | null;
+type Filter = "pending" | "approved" | "rejected" | "failed" | "withdrawn" | "all";
+
+// How each application status is shown (the tabs use the same names).
+const STATUS_LABEL: Record<string, string> = {
+  preparing: "preparing",
+  ready_for_review: "pending",
+  preparation_failed: "failed",
 };
+const statusLabel = (status: string) => STATUS_LABEL[status] ?? status;
 
 export default function ReviewQueue() {
-  const [results, setResults] = useState<BatchResult[]>([]);
+  const [results, setResults] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "pending" | "approved" | "rejected" | "failed">("pending");
+  const [filter, setFilter] = useState<Filter>("pending");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editedCoverLetter, setEditedCoverLetter] = useState("");
   const [saving, setSaving] = useState<Record<number, boolean>>({});
@@ -39,76 +30,80 @@ export default function ReviewQueue() {
   async function fetchResults() {
     setLoading(true);
     try {
-      const url =
-        filter === "all"
-          ? "/api/batch-results"
-          : `/api/batch-results?status=${filter}`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/applications?status=${filter}`);
       const data = await res.json();
       setResults(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error("Failed to fetch results:", err);
+      console.error("Failed to fetch applications:", err);
     } finally {
       setLoading(false);
     }
   }
 
-  async function updateStatus(id: number, status: "approved" | "rejected") {
-    setSaving((prev) => ({ ...prev, [id]: true }));
+  // Sends one reviewer action; returns the updated application, or null if
+  // it was refused (the reason is shown to the user).
+  async function sendAction(id: number, body: Record<string, unknown>): Promise<ReviewItem | null> {
+    const res = await fetch(`/api/applications/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `Update failed (HTTP ${res.status})`);
+    }
+    return data as ReviewItem;
+  }
+
+  async function updateStatus(item: ReviewItem, action: "approve" | "reject" | "withdraw") {
+    setSaving((prev) => ({ ...prev, [item.id]: true }));
     try {
-      const res = await fetch(`/api/batch-results/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, notes: notes[id] }),
+      await sendAction(item.id, {
+        action,
+        note: notes[item.id],
+        // Approval confirms exactly the content shown on this card.
+        ...(action === "approve" ? { reviewedAssetsSha256: item.assetsHash } : {}),
       });
-      if (!res.ok) {
-        throw new Error(`Status update failed (HTTP ${res.status})`);
-      }
 
-      // If approved, open the job URL so you can apply immediately
-      if (status === "approved") {
-        const result = results.find((r) => r.id === id);
-        if (result?.job_url) {
-          window.open(result.job_url, "_blank");
-        }
+      // If approved, open the job URL so you can apply yourself.
+      if (action === "approve" && item.job.url) {
+        window.open(item.job.url, "_blank");
       }
-
-      await fetchResults();
     } catch (err) {
       console.error("Failed to update status:", err);
       alert(err instanceof Error ? err.message : String(err));
     } finally {
-      setSaving((prev) => ({ ...prev, [id]: false }));
+      setSaving((prev) => ({ ...prev, [item.id]: false }));
+      await fetchResults();
     }
   }
 
-  async function saveCoverLetter(id: number) {
-    setSaving((prev) => ({ ...prev, [id]: true }));
+  async function saveCoverLetter(item: ReviewItem) {
+    setSaving((prev) => ({ ...prev, [item.id]: true }));
     try {
-      const res = await fetch(`/api/batch-results/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coverLetter: editedCoverLetter }),
+      const updated = await sendAction(item.id, {
+        action: "edit_cover_letter",
+        coverLetter: editedCoverLetter,
       });
-      if (!res.ok) {
-        throw new Error(`Saving the cover letter failed (HTTP ${res.status})`);
-      }
       setEditingId(null);
+      if (item.status === "approved" && updated && updated.status !== "approved") {
+        alert("The cover letter changed after approval, so the approval was withdrawn. Review and approve it again.");
+      }
       await fetchResults();
     } catch (err) {
       console.error("Failed to save cover letter:", err);
       alert(err instanceof Error ? err.message : String(err));
     } finally {
-      setSaving((prev) => ({ ...prev, [id]: false }));
+      setSaving((prev) => ({ ...prev, [item.id]: false }));
     }
   }
 
-  const pendingCount = results.filter((r) => r.status === "pending").length;
+  const pendingCount = results.filter((r) => r.status === "ready_for_review").length;
 
   const statusColour = (status: string) => {
     if (status === "approved") return "bg-green-100 text-green-700";
     if (status === "rejected") return "bg-red-100 text-red-700";
-    if (status === "failed") return "bg-gray-100 text-gray-500";
+    if (status === "preparation_failed" || status === "withdrawn") return "bg-gray-100 text-gray-500";
     return "bg-yellow-100 text-yellow-700";
   };
 
@@ -121,7 +116,8 @@ export default function ReviewQueue() {
           <div>
             <h1 className="text-4xl font-bold text-gray-900">Review Queue</h1>
             <p className="mt-1 text-gray-600">
-              Approve to open the job and apply. Reject to skip. Edit cover letters before approving.
+              Approve to open the job and apply yourself. Reject to skip. Edit cover letters before approving.
+              Nothing is ever submitted for you.
             </p>
           </div>
           <Link
@@ -134,7 +130,7 @@ export default function ReviewQueue() {
 
         {/* Filter Tabs */}
         <div className="mt-6 flex gap-2">
-          {(["pending", "approved", "rejected", "failed", "all"] as const).map((f) => (
+          {(["pending", "approved", "rejected", "failed", "withdrawn", "all"] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -170,8 +166,8 @@ export default function ReviewQueue() {
             <div className="rounded-xl bg-white p-8 text-center shadow">
               <p className="text-gray-500">
                 {filter === "pending"
-                  ? "No pending results. Run a batch from the main page first."
-                  : `No ${filter} results yet.`}
+                  ? "No pending applications. Run a batch from the main page first."
+                  : `No ${filter} applications yet.`}
               </p>
               <Link
                 href="/"
@@ -190,26 +186,27 @@ export default function ReviewQueue() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <h2 className="text-xl font-bold text-gray-900">
-                      {result.job_title}
+                      {result.job.title}
                     </h2>
                     <p className="text-gray-600">
-                      {result.job_company}
-                      {result.job_location ? ` • 📍 ${result.job_location}` : ""}
+                      {result.job.company}
+                      {result.job.location ? ` • 📍 ${result.job.location}` : ""}
                     </p>
-                    {result.job_salary_min && result.job_salary_max && (
+                    {result.job.salaryMin && result.job.salaryMax && (
                       <p className="mt-1 font-semibold text-green-600">
-                        💷 £{result.job_salary_min.toLocaleString()} – £{result.job_salary_max.toLocaleString()}
+                        💷 £{result.job.salaryMin.toLocaleString()} – £{result.job.salaryMax.toLocaleString()}
                       </p>
                     )}
                     <p className="mt-1 text-sm text-gray-500">
-                      Saved {new Date(result.created_at).toLocaleString()}
+                      Saved {new Date(`${result.createdAt.replace(" ", "T")}Z`).toLocaleString()}
+                      {result.isLegacyImport ? " • imported from the old review queue" : ""}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-2">
-                    {result.match_score && (
+                    {result.match?.score != null && (
                       <div className="rounded-xl bg-blue-100 px-4 py-2 text-center">
                         <p className="text-2xl font-bold text-blue-700">
-                          {result.match_score}%
+                          {result.match.score}%
                         </p>
                         <p className="text-xs text-blue-600">Match</p>
                       </div>
@@ -217,23 +214,23 @@ export default function ReviewQueue() {
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${statusColour(result.status)}`}
                     >
-                      {result.status}
+                      {statusLabel(result.status)}
                     </span>
                   </div>
                 </div>
 
-                {result.error && (
+                {result.lastError && (
                   <p className="mt-4 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">
-                    ⚠️ {result.error}
+                    ⚠️ {result.lastError}
                   </p>
                 )}
 
                 {/* CV Download */}
-                {result.cv_filename && (
+                {result.cvFile && (
                   <div className="mt-4">
                     <a
-                      href={`/api/batch-results/${result.id}`}
-                      download={result.cv_filename}
+                      href={`/api/applications/${result.id}/assets/${result.cvFile.assetId}`}
+                      download={result.cvFile.filename ?? undefined}
                       className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                     >
                       📄 Download Tailored CV
@@ -242,13 +239,21 @@ export default function ReviewQueue() {
                 )}
 
                 {/* Cover Letter */}
-                {result.cover_letter && (
+                {result.coverLetter && (
                   <div className="mt-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-semibold text-gray-900">✍️ Cover Letter</h3>
+                      <h3 className="font-semibold text-gray-900">
+                        ✍️ Cover Letter
+                        {result.coverLetter.version > 1 && (
+                          <span className="ml-2 text-xs font-normal text-gray-500">
+                            version {result.coverLetter.version}
+                            {result.coverLetter.origin === "user_edit" ? " (edited)" : ""}
+                          </span>
+                        )}
+                      </h3>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => navigator.clipboard.writeText(result.cover_letter)}
+                          onClick={() => navigator.clipboard.writeText(result.coverLetter!.text)}
                           className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-200"
                         >
                           Copy
@@ -257,7 +262,7 @@ export default function ReviewQueue() {
                           <button
                             onClick={() => {
                               setEditingId(result.id);
-                              setEditedCoverLetter(result.cover_letter);
+                              setEditedCoverLetter(result.coverLetter!.text);
                             }}
                             className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-200"
                           >
@@ -277,7 +282,7 @@ export default function ReviewQueue() {
                         />
                         <div className="mt-2 flex gap-2">
                           <button
-                            onClick={() => saveCoverLetter(result.id)}
+                            onClick={() => saveCoverLetter(result)}
                             disabled={saving[result.id]}
                             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                           >
@@ -293,7 +298,7 @@ export default function ReviewQueue() {
                       </div>
                     ) : (
                       <div className="mt-2 rounded-lg bg-gray-50 p-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-                        {result.cover_letter}
+                        {result.coverLetter.text}
                       </div>
                     )}
                   </div>
@@ -313,25 +318,25 @@ export default function ReviewQueue() {
                 </div>
 
                 {/* Action Buttons */}
-                {result.status === "pending" && (
+                {result.status === "ready_for_review" && (
                   <div className="mt-4 flex gap-3 border-t border-gray-100 pt-4">
                     <button
-                      onClick={() => updateStatus(result.id, "approved")}
+                      onClick={() => updateStatus(result, "approve")}
                       disabled={saving[result.id]}
                       className="rounded-lg bg-green-600 px-6 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50"
                     >
                       {saving[result.id] ? "..." : "✅ Approve & Open Job"}
                     </button>
                     <button
-                      onClick={() => updateStatus(result.id, "rejected")}
+                      onClick={() => updateStatus(result, "reject")}
                       disabled={saving[result.id]}
                       className="rounded-lg bg-red-100 px-6 py-2 font-semibold text-red-700 hover:bg-red-200 disabled:opacity-50"
                     >
                       ❌ Reject
                     </button>
-                    {result.job_url && (
+                    {result.job.url && (
                       <a
-                        href={result.job_url}
+                        href={result.job.url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-lg bg-gray-100 px-6 py-2 font-semibold text-gray-700 hover:bg-gray-200"
@@ -344,19 +349,29 @@ export default function ReviewQueue() {
 
                 {result.status === "approved" && (
                   <div className="mt-4 flex gap-3 border-t border-gray-100 pt-4">
-                    <a
-                      href={result.job_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700"
-                    >
-                      Apply Now →
-                    </a>
+                    {result.job.url && (
+                      <a
+                        href={result.job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700"
+                      >
+                        Apply Now →
+                      </a>
+                    )}
                     <button
-                      onClick={() => updateStatus(result.id, "rejected")}
-                      className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-200"
+                      onClick={() => updateStatus(result, "reject")}
+                      disabled={saving[result.id]}
+                      className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-200 disabled:opacity-50"
                     >
                       Move to Rejected
+                    </button>
+                    <button
+                      onClick={() => updateStatus(result, "withdraw")}
+                      disabled={saving[result.id]}
+                      className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      Withdraw
                     </button>
                   </div>
                 )}
