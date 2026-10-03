@@ -5,6 +5,9 @@ import { abortMatching, beginMatching, recordMatchResults } from "@/lib/pipeline
 import type { MatchingSession, ScoredJob } from "@/lib/pipeline/matching";
 import { buildMatchPrompt, jobIdOf, selectJobsForScoring } from "@/lib/pipeline/match-scoring";
 import type { MatchJob } from "@/lib/pipeline/match-scoring";
+import { enrichSelectedJobs } from "@/lib/pipeline/job-details";
+import { fetchReedJobDetail } from "@/lib/sources/reed-details";
+import { describeError } from "@/lib/log-safety";
 
 // Jobs arrive as JSON from the UI or the scheduler; their other fields
 // (id, sourceIds, url, …) are passed through to the response untouched.
@@ -211,6 +214,26 @@ if (selectedJobs.length === 0) {
 }
 
     console.log("Selected for scoring:", selectedJobs.length, "job(s)");
+
+    // Full Reed descriptions for the selected jobs (lib/pipeline/job-details.ts),
+    // only for runs whose matches are saved. Failures fall back to the snippet.
+    // The scoring prompt does not use them yet.
+    const reedKey = process.env.REED_API_KEY;
+    if (session && reedKey) {
+      try {
+        const detailStats = await enrichSelectedJobs(
+          db,
+          selectedJobs.flatMap((job) => {
+            const jobId = jobIdOf(job);
+            return jobId === null ? [] : [jobId];
+          }),
+          { fetchDetail: (externalId) => fetchReedJobDetail(externalId, reedKey) }
+        );
+        console.log("Reed details:", detailStats);
+      } catch (error) {
+        console.error("Reed details skipped:", describeError(error));
+      }
+    }
 
     // -----------------------------------------------
     // Parallel Ollama calls — one per job

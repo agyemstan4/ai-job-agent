@@ -137,6 +137,9 @@ or if any of its listings is in the original `seen_jobs` table.
 your skills, no senior title), scores the top 10 with the local model
 (blending the model's score with a breakdown-based score), and records each
 outcome. Scored jobs are also marked as seen so they don't reappear.
+Before scoring, the full description of each selected Reed job is fetched
+once from Reed's job details API (runs started from the UI only) and stored;
+if the request fails, the search snippet is used.
 
 ### CV and application preparation
 For each selected job the page calls `/api/tailor-cv`, `/api/generate-cv-docx`
@@ -184,8 +187,9 @@ same reason.
   `.data/jobs.db`. `.data/` and `.env*` are git-ignored.
 - Server logs contain counts, IDs, scores, timings and error categories —
   not CV text, names, contact details, application content or API keys.
-- External calls: Adzuna and Reed (search terms and location), Ollama
-  (local), and Resend only if you enable email copies.
+- External calls: Adzuna and Reed (search terms and location), Reed's job
+  details API (the IDs of jobs selected for scoring), Ollama (local), and
+  Resend only if you enable email copies.
 - **Human approval is mandatory**: only you can approve an application, mark
   it as applied, or change its status afterwards — enforced in code and in the
   database.
