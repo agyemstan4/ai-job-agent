@@ -132,6 +132,24 @@ or the same normalised company and title across sources. A job counts as
 already processed if it was scored or filtered out for your current profile,
 or if any of its listings is in the original `seen_jobs` table.
 
+### Search preferences
+Saved with your candidate record (`GET`/`PUT /api/preferences`; there is no
+page for them yet). Send `{ "preferences": { ... } }` to save, or
+`{ "preferences": null }` to clear:
+
+| Field | Rule | Effect |
+|---|---|---|
+| `searchTerms` | 1–6 terms, 2–60 characters | Replace the fixed search terms; the role selected on `/` is still searched first (at most 7 terms) |
+| `location` | 2–60 characters | Replaces "London" |
+| `excludeKeywords` | optional, up to 20 | Jobs whose title contains one (whole word, any case) are not returned |
+| `minSalary` | optional, whole £ per year, 0–200,000 | Jobs whose known salary (top of the range) is lower are not returned |
+
+Jobs with no salary, an Adzuna estimated salary, or a day or hour rate (under
+£1,000) are always kept. Excluded jobs are simply not returned — nothing is
+recorded — so changing your preferences takes effect on the next search. With
+no preferences saved, discovery is unchanged. The scheduler sends no profile,
+so it never uses preferences.
+
 ### Matching
 `POST /api/match` pre-filters jobs (developer role keywords, at least one of
 your skills, no senior title), scores the top 10 with the local model

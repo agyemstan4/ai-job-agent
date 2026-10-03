@@ -3,6 +3,8 @@ import db, { filterNewJobs } from "@/lib/db";
 import { recordDiscovery } from "@/lib/pipeline/discovery";
 import type { DiscoveredListing } from "@/lib/pipeline/discovery";
 import { describeError } from "@/lib/log-safety";
+import { applyDiscoveryFilter, preferencesForProfile, searchPlan } from "@/lib/pipeline/preferences";
+import type { SearchPreferences } from "@/lib/pipeline/preferences";
 
 export async function POST(req: Request) {
   try {
@@ -21,22 +23,27 @@ export async function POST(req: Request) {
 
     let failedRequests = 0;
 
-    const searchTerms = Array.from(
-      new Set([
-        role,
-        "junior software engineer",
-        "graduate software developer",
-        "android developer",
-        "java developer",
-        "frontend developer",
-        "full stack developer",
-      ])
+    // Search preferences (lib/pipeline/preferences.ts) of the candidate behind
+    // the profile. None saved, no profile (the scheduler) or unreadable: the
+    // previous fixed terms and the location sent in.
+    let preferences: SearchPreferences | null = null;
+    try {
+      preferences = preferencesForProfile(db, candidateProfileId);
+    } catch (error) {
+      console.warn("Search preferences unavailable; using the defaults:", describeError(error));
+    }
+    const { terms: searchTerms, location: searchLocation } = searchPlan(preferences, { role, location });
+    console.log(
+      "Search preferences:",
+      preferences
+        ? { terms: searchTerms.length, excludeKeywords: preferences.excludeKeywords.length, salaryFloor: preferences.minSalary !== null }
+        : "none (defaults)"
     );
 
     // ── Adzuna ──────────────────────────────────────────────────────────────
     const fetchAdzuna = async () => {
       const fetches = searchTerms.map(async (term) => {
-        const url = `https://api.adzuna.com/v1/api/jobs/gb/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=20&what=${encodeURIComponent(term)}&where=${encodeURIComponent(location)}`;
+        const url = `https://api.adzuna.com/v1/api/jobs/gb/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=20&what=${encodeURIComponent(term)}&where=${encodeURIComponent(searchLocation)}`;
         const response = await fetch(url).catch((error) => {
           console.log("Adzuna request error:", term, describeError(error));
           return null;
@@ -74,7 +81,7 @@ export async function POST(req: Request) {
       if (!reedKey) return [];
 
       const fetches = searchTerms.map(async (term) => {
-        const url = `https://www.reed.co.uk/api/1.0/search?keywords=${encodeURIComponent(term)}&location=${encodeURIComponent(location)}&resultsToTake=20`;
+        const url = `https://www.reed.co.uk/api/1.0/search?keywords=${encodeURIComponent(term)}&location=${encodeURIComponent(searchLocation)}&resultsToTake=20`;
         const response = await fetch(url, {
           headers: {
             Authorization: `Basic ${Buffer.from(reedKey + ":").toString("base64")}`,
@@ -162,7 +169,7 @@ export async function POST(req: Request) {
         listings,
         candidateProfileId: typeof candidateProfileId === "number" ? candidateProfileId : null,
         triggeredBy: triggeredBy === "scheduler" ? "scheduler" : "ui",
-        params: { role, location },
+        params: preferences ? { role, location: searchLocation, preferences: true } : { role, location },
       });
       for (const warning of discovery.warnings) console.warn("Discovery:", warning);
       console.log("UNIQUE (this batch):", discovery.stats.uniqueJobs);
@@ -187,6 +194,27 @@ export async function POST(req: Request) {
         .map(({ job: { raw, ...job }, sourceIds }) => ({ ...job, sourceIds }));
     }
     console.log("NEW (not processed before):", newJobs.length);
+
+    // Preferences: leave out excluded titles and jobs below the salary floor.
+    // Nothing is recorded for them, so they return if the preferences change.
+    if (preferences) {
+      const salaryIsPredicted = new Map(
+        allJobs.map((job) => [
+          job.id,
+          job.source === "Adzuna" && job.raw?.salary_is_predicted !== undefined
+            ? String(job.raw.salary_is_predicted) === "1"
+            : null,
+        ])
+      );
+      const filtered = applyDiscoveryFilter(preferences, newJobs, (job) => ({
+        title: job.title,
+        salaryMin: job.salary_min ?? null,
+        salaryMax: job.salary_max ?? null,
+        salaryIsPredicted: salaryIsPredicted.get(job.id) ?? null,
+      }));
+      newJobs = filtered.kept;
+      console.log("Left out by preferences:", { excludedByKeyword: filtered.excludedByKeyword, belowMinSalary: filtered.belowMinSalary, returned: newJobs.length });
+    }
 
     return NextResponse.json(newJobs);
   } catch (error) {
