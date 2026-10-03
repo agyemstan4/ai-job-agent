@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
-import { listReviewItems, REVIEW_FILTERS } from "@/lib/repositories/review";
+import { isTrackerFilter, listReviewItems, listTrackerItems, REVIEW_FILTERS } from "@/lib/repositories/review";
 import { handleBatchSave } from "@/lib/batch-save-route";
 
-// The review queue: applications with their job, match and current content.
-// ?status=pending|approved|rejected|failed|withdrawn|all (default all).
+// Applications with their job, match, current content and tracking record.
+// ?status=pending|approved|rejected|failed|withdrawn|all (the review queue;
+// default all) or to_apply|applied|closed|tracked (the application tracker).
+// Read-only: listing never changes any application.
 export async function GET(req: NextRequest) {
   try {
     const filter = req.nextUrl.searchParams.get("status") ?? "all";
+    if (isTrackerFilter(filter)) {
+      return NextResponse.json(listTrackerItems(db, filter));
+    }
     const statuses = REVIEW_FILTERS[filter];
     if (!statuses) {
       return NextResponse.json({ error: `Unknown status filter: ${filter}` }, { status: 400 });

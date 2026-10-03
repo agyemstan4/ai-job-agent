@@ -1,6 +1,24 @@
 import type { DB } from "./shared.ts";
-import type { ApplicationStatus } from "./applications.ts";
-import { getApplication, getCurrentAssets, getCurrentAssetsHash } from "./applications.ts";
+import type {
+  ApplicationStatus,
+  PostSubmissionStatus,
+  ReferenceChange,
+  StatusHistoryEntry,
+  SubmissionRecord,
+  TrackerGroup,
+} from "./applications.ts";
+import {
+  canTransition,
+  getApplication,
+  getCurrentAssets,
+  getCurrentAssetsHash,
+  getSubmissionRecord,
+  listReferenceHistory,
+  listStatusHistory,
+  listTrackedApplications,
+  POST_SUBMISSION_STATUSES,
+  trackerGroupOf,
+} from "./applications.ts";
 import { getJob } from "./jobs.ts";
 import { getMatch } from "./matches.ts";
 
@@ -32,8 +50,16 @@ export type ReviewItem = {
   coverLetter: { assetId: number; version: number; text: string; origin: string } | null;
   cvFile: { assetId: number; version: number; filename: string | null; mimeType: string | null } | null;
   hasTailoredCvData: boolean;
-  /** Hash of all current assets; approval must confirm this exact value. */
+  /** Hash of all current assets; approval (and marking as applied) must confirm this exact value. */
   assetsHash: string;
+  /** Tracker section: to_apply, applied or closed; null if not tracked. */
+  trackerGroup: TrackerGroup | null;
+  /** How and when the user applied (null until marked as applied). */
+  submission: SubmissionRecord | null;
+  /** Updates allowed next by the existing forward-only rules (empty unless applied and open). */
+  nextStatuses: PostSubmissionStatus[];
+  statusHistory: StatusHistoryEntry[];
+  referenceHistory: ReferenceChange[];
 };
 
 /** The URL of the job's most recently seen listing that has one. */
@@ -55,6 +81,7 @@ export function getReviewItem(db: DB, applicationId: number): ReviewItem | null 
   const assets = getCurrentAssets(db, application.id);
   const coverLetter = assets.find((a) => a.kind === "cover_letter");
   const cvFile = assets.find((a) => a.kind === "tailored_cv_file");
+  const trackerGroup = trackerGroupOf(application);
 
   return {
     id: application.id,
@@ -90,6 +117,12 @@ export function getReviewItem(db: DB, applicationId: number): ReviewItem | null 
       : null,
     hasTailoredCvData: assets.some((a) => a.kind === "tailored_cv_data"),
     assetsHash: getCurrentAssetsHash(db, application.id),
+    trackerGroup,
+    submission: getSubmissionRecord(db, application.id),
+    nextStatuses:
+      trackerGroup === "applied" ? POST_SUBMISSION_STATUSES.filter((to) => canTransition(application.status, to)) : [],
+    statusHistory: listStatusHistory(db, application.id),
+    referenceHistory: listReferenceHistory(db, application.id),
   };
 }
 
@@ -105,6 +138,19 @@ export function listReviewItems(db: DB, statuses: ApplicationStatus[] = []): Rev
       .all(...statuses) as { id: number }[]
   ).map((row) => row.id);
   return ids.map((id) => getReviewItem(db, id)!);
+}
+
+/** The tracker's sections (see trackerGroupOf / listTrackedApplications). */
+export const TRACKER_FILTERS = ["to_apply", "applied", "closed", "tracked"] as const;
+export type TrackerFilter = (typeof TRACKER_FILTERS)[number];
+
+export function isTrackerFilter(value: string): value is TrackerFilter {
+  return (TRACKER_FILTERS as readonly string[]).includes(value);
+}
+
+/** Tracker items for one section (or all tracked), most recent first. */
+export function listTrackerItems(db: DB, filter: TrackerFilter): ReviewItem[] {
+  return listTrackedApplications(db, filter).map((application) => getReviewItem(db, application.id)!);
 }
 
 /** The review page's filter tabs, as application statuses. */

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { getReviewItem } from "@/lib/repositories/review";
-import { applyReviewAction, httpStatusFor, parseReviewAction } from "@/lib/pipeline/review";
+import { applyReviewAction, clientErrorMessage, httpStatusFor, parseReviewAction } from "@/lib/pipeline/review";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -17,9 +17,11 @@ export async function GET(_req: NextRequest, { params }: Context) {
   }
 }
 
-// A reviewer action: approve (with the reviewed content hash), reject,
-// withdraw, note, or edit_cover_letter. Approval is a decision only;
-// nothing is submitted.
+// A user action: approve (with the reviewed content hash), reject, withdraw,
+// note, edit_cover_letter, mark_submitted (the user applied on the employer's
+// site themselves; requires confirm: true), update_status (after applying)
+// or set_reference. Nothing here submits anything, opens a website or sends
+// email.
 export async function PATCH(req: NextRequest, { params }: Context) {
   try {
     const { id } = await params;
@@ -28,9 +30,6 @@ export async function PATCH(req: NextRequest, { params }: Context) {
   } catch (error) {
     const status = httpStatusFor(error);
     if (status === 500) console.error("PATCH /api/applications/[id] error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to update application" },
-      { status }
-    );
+    return NextResponse.json({ error: clientErrorMessage(error, "Failed to update application") }, { status });
   }
 }
