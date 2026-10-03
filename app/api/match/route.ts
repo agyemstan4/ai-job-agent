@@ -3,9 +3,17 @@ import { fetch as undiciFetch, Agent } from "undici";
 import db, { markJobsSeen } from "@/lib/db";
 import { abortMatching, beginMatching, recordMatchResults } from "@/lib/pipeline/matching";
 import type { MatchingSession, ScoredJob } from "@/lib/pipeline/matching";
-import { buildMatchPrompt, jobIdOf, selectJobsForScoring } from "@/lib/pipeline/match-scoring";
+import {
+  buildMatchPrompt,
+  jobIdOf,
+  MATCH_NUM_CTX,
+  MATCH_NUM_PREDICT,
+  MATCH_PROMPT_TOKEN_BUDGET,
+  promptMayBeTruncated,
+  selectJobsForScoring,
+} from "@/lib/pipeline/match-scoring";
 import type { MatchJob } from "@/lib/pipeline/match-scoring";
-import { enrichSelectedJobs } from "@/lib/pipeline/job-details";
+import { enrichSelectedJobs, scoringDescriptionFor } from "@/lib/pipeline/job-details";
 import { fetchReedJobDetail } from "@/lib/sources/reed-details";
 import { describeError } from "@/lib/log-safety";
 
@@ -15,8 +23,10 @@ import { describeError } from "@/lib/log-safety";
 type IncomingJob = MatchJob & Record<string, any>;
 
 const MATCH_MODEL = "llama3.2:3b";
-// Recorded on each match. Bump when the scoring prompt below changes.
-const MATCH_PROMPT_VERSION = "match/v1";
+// Recorded on each match. Bump when the scoring prompt changes.
+// v2 (checkpoint 3b-3): scores against the job's best stored description,
+// up to SCORING_DESCRIPTION_CHARS, instead of 150 characters of the snippet.
+const MATCH_PROMPT_VERSION = "match/v2";
 
 // Ollama only replies once generation has finished, and the scoring calls
 // queue behind each other on CPU, so a call can wait longer than the
@@ -217,7 +227,7 @@ if (selectedJobs.length === 0) {
 
     // Full Reed descriptions for the selected jobs (lib/pipeline/job-details.ts),
     // only for runs whose matches are saved. Failures fall back to the snippet.
-    // The scoring prompt does not use them yet.
+    // The scoring prompt then uses each job's best stored description.
     const reedKey = process.env.REED_API_KEY;
     if (session && reedKey) {
       try {
@@ -240,7 +250,9 @@ if (selectedJobs.length === 0) {
     // -----------------------------------------------
 
     const callOllama = async (job: IncomingJob, index: number) => {
-      const jobPrompt = buildMatchPrompt(candidate, job, index);
+      // Only the prompt reads the stored description; the pre-filter, ranking,
+      // backend corrections and the response keep the description sent in.
+      const jobPrompt = buildMatchPrompt(candidate, job, index, scoringDescriptionFor(db, job));
 
       const res = await undiciFetch("http://localhost:11434/api/generate", {
         method: "POST",
@@ -253,8 +265,8 @@ if (selectedJobs.length === 0) {
           format: "json",
           options: {
             temperature: 0,
-            num_predict: 400,
-            num_ctx: 2048,
+            num_predict: MATCH_NUM_PREDICT,
+            num_ctx: MATCH_NUM_CTX,
           },
         }),
       });
@@ -263,13 +275,17 @@ if (selectedJobs.length === 0) {
         throw new Error(`Ollama error: ${res.status}`);
       }
 
-      const data = (await res.json()) as { response: string; eval_count?: number };
+      const data = (await res.json()) as { response: string; eval_count?: number; prompt_eval_count?: number };
+      // A prompt that did not fit is cut from the start by Ollama.
+      if (promptMayBeTruncated(jobPrompt.length, data.prompt_eval_count)) {
+        console.warn(`⚠️ Job ${index + 1} prompt may have been truncated: ${jobPrompt.length} characters, ${data.prompt_eval_count} tokens (budget ${MATCH_PROMPT_TOKEN_BUDGET})`);
+      }
 
       try {
         const parsed = JSON.parse(
           data.response.replace(/```json/g, "").replace(/```/g, "").trim()
         );
-        console.log(`✅ Job ${index + 1} scored (${data.eval_count ?? "?"} tokens)`);
+        console.log(`✅ Job ${index + 1} scored (${data.eval_count ?? "?"} tokens, prompt ${data.prompt_eval_count ?? "?"} tokens)`);
         return { ...parsed, jobNumber: index + 1 };
       } catch {
         console.error(`❌ Job ${index + 1} failed to parse`);

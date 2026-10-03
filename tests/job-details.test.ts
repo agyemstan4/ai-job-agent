@@ -7,7 +7,7 @@ import { count, freshDb, quietly, seedSeenJobs } from "./helpers.ts";
 import type { ReedDetailResult } from "../lib/sources/reed-details.ts";
 import { fetchReedJobDetail, htmlToText, REED_DETAILS_URL } from "../lib/sources/reed-details.ts";
 import type { DetailFetcher } from "../lib/pipeline/job-details.ts";
-import { enrichSelectedJobs, reedListingToEnrich } from "../lib/pipeline/job-details.ts";
+import { enrichSelectedJobs, reedListingToEnrich, scoringDescriptionFor } from "../lib/pipeline/job-details.ts";
 import { createCandidate, createProfileVersion } from "../lib/repositories/candidates.ts";
 import { getBestDescription, recordJobListing } from "../lib/repositories/jobs.ts";
 import { recordMatch } from "../lib/repositories/matches.ts";
@@ -323,6 +323,63 @@ describe("3b-2: enrichSelectedJobs", () => {
   });
 });
 
+// ── scoringDescriptionFor (checkpoint 3b-3) ─────────────────────────────────
+
+describe("3b-3: scoringDescriptionFor", () => {
+  test("a fetched full description is used", async () => {
+    const { jobId } = reedJob("2001");
+    await enrichSelectedJobs(t.db, [jobId], { fetchDetail: fakeReed().fetchDetail });
+    assert.equal(scoringDescriptionFor(t.db, { jobId, description: "sent in" }), "Full description for 2001");
+  });
+
+  test("otherwise the longest stored snippet of any of the job's listings", () => {
+    const adz = recordJobListing(t.db, {
+      sourceId: "adzuna", externalId: "S1", title: "Snippet Developer", company: "Co", description: "A".repeat(500),
+    });
+    reedJob("2002", "Snippet Developer", "Co");
+    assert.equal(scoringDescriptionFor(t.db, { jobId: adz.jobId, description: "short" }), "A".repeat(500));
+    assert.equal(reedJob("2003").jobId > 0, true);
+    assert.equal(scoringDescriptionFor(t.db, { jobId: reedJob("2003").jobId }), SNIPPET);
+  });
+
+  test("a job that was not stored, or has no description, uses the one sent in", () => {
+    assert.equal(scoringDescriptionFor(t.db, { description: "sent in" }), "sent in");
+    // A jobId that is not a number is ignored, even if it names a stored job.
+    const stored = reedJob("2005").jobId;
+    assert.equal(scoringDescriptionFor(t.db, { jobId: String(stored), description: "string id" }), "string id");
+    assert.equal(scoringDescriptionFor(t.db, { jobId: 99999, description: "unknown job" }), "unknown job");
+    const bare = recordJobListing(t.db, { sourceId: "adzuna", externalId: "S2", title: "No Desc", company: "Co" }).jobId;
+    assert.equal(scoringDescriptionFor(t.db, { jobId: bare, description: "sent in" }), "sent in");
+    assert.equal(scoringDescriptionFor(t.db, { jobId: bare }), "");
+  });
+
+  test("the saved match records the description that was scored", async () => {
+    const reedOnly = reedJob("2004").jobId;
+    const adzOnly = adzunaJob("S3").jobId;
+    await enrichSelectedJobs(t.db, [reedOnly, adzOnly], { fetchDetail: fakeReed().fetchDetail });
+    const used = new Map([reedOnly, adzOnly].map((jobId) => [jobId, scoringDescriptionFor(t.db, { jobId })]));
+
+    const { matchIds } = recordMatchResults(t.db, { candidateProfileId: profileId, runId: null, warnings: [] }, {
+      scored: [reedOnly, adzOnly].map((jobId) => ({
+        jobId, score: 70, modelScore: 70, breakdownScore: 70, breakdown: {}, reason: "r", strengths: [], missingSkills: [],
+      })),
+      filteredOut: [], failed: [], model: "llama3.2:3b", promptVersion: "match/v2",
+    });
+    for (const [jobId, description] of used) {
+      const row = t.db
+        .prepare(
+          `SELECT m.prompt_version, d.content FROM matches m JOIN job_descriptions d ON d.id = m.job_description_id
+           WHERE m.id = ?`
+        )
+        .get(matchIds.get(jobId)) as { prompt_version: string; content: string };
+      assert.equal(row.content, description);
+      assert.equal(row.prompt_version, "match/v2");
+    }
+    assert.equal(used.get(reedOnly), "Full description for 2004");
+    assert.equal(used.get(adzOnly), "Adzuna snippet");
+  });
+});
+
 // ── /api/match wiring (source checks: tests never import route modules) ─────
 
 describe("3b-2: /api/match fetches details only for selected jobs of saved runs", () => {
@@ -343,9 +400,19 @@ describe("3b-2: /api/match fetches details only for selected jobs of saved runs"
     assert.match(route, /\} catch \(error\) \{\s*console\.error\("Reed details skipped:", describeError\(error\)\);/);
   });
 
-  test("scoring is unchanged: the prompt still uses the request's job and match/v1", () => {
-    assert.match(route, /const jobPrompt = buildMatchPrompt\(candidate, job, index\);/);
-    assert.match(route, /const MATCH_PROMPT_VERSION = "match\/v1";/);
+  test("the prompt scores against the stored description (match/v2)", () => {
+    assert.match(route, /const jobPrompt = buildMatchPrompt\(candidate, job, index, scoringDescriptionFor\(db, job\)\);/);
+    assert.match(route, /const MATCH_PROMPT_VERSION = "match\/v2";/);
+    // Enrichment happens before any prompt is built.
+    assert.ok(route.indexOf("await enrichSelectedJobs(") < route.indexOf("scoringDescriptionFor(db, job)"));
+  });
+
+  test("only the prompt reads the stored description", () => {
+    assert.equal((route.match(/scoringDescriptionFor\(/g) ?? []).length, 1);
+    // Pre-filter/ranking input, backend corrections and the response are unchanged.
+    assert.match(route, /selectJobsForScoring<IncomingJob>\(jobs, candidate\)/);
+    assert.match(route, /const jobText = `\$\{job\.title\} \$\{job\.description\}`\.toLowerCase\(\);/);
+    assert.match(route, /description: job\.description \|\| "",/);
   });
 
   test("job discovery makes no detail requests", () => {

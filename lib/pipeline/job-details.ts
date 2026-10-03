@@ -1,5 +1,5 @@
 import type { DB } from "../repositories/shared.ts";
-import { addJobDescription } from "../repositories/jobs.ts";
+import { addJobDescription, getBestDescription } from "../repositories/jobs.ts";
 import type { ReedDetailResult } from "../sources/reed-details.ts";
 
 // Phase 3 checkpoint 3b-2: full Reed descriptions for the jobs /api/match
@@ -31,6 +31,20 @@ export type EnrichmentStats = {
   /** Why requests stopped early, if they did. */
   stoppedBy: "rate_limited" | "auth_failed" | null;
 };
+
+/**
+ * The description a job is scored against (checkpoint 3b-3): its best stored
+ * description — the full text if one was fetched, else the longest snippet
+ * of any of its listings — or, for a job that was not stored, the one sent
+ * in. recordMatchResults records the same best description on the match.
+ */
+export function scoringDescriptionFor(
+  db: DB,
+  job: { jobId?: unknown; description?: string }
+): string {
+  const stored = typeof job.jobId === "number" ? getBestDescription(db, job.jobId)?.content : undefined;
+  return stored || job.description || "";
+}
 
 /** The Reed listing to fetch details for, or null if the job is not eligible. */
 export function reedListingToEnrich(db: DB, jobId: number): { listingId: number; externalId: string } | null {

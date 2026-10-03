@@ -4,10 +4,15 @@ import fs from "node:fs";
 import path from "node:path";
 import type { MatchCandidate, MatchJob } from "../lib/pipeline/match-scoring.ts";
 import {
+  boundDescription,
   buildMatchPrompt,
   filterReasonFor,
   jobIdOf,
+  MATCH_NUM_CTX,
+  MATCH_NUM_PREDICT,
+  MATCH_PROMPT_TOKEN_BUDGET,
   MAX_JOBS_TO_SCORE,
+  promptMayBeTruncated,
   SCORING_DESCRIPTION_CHARS,
   selectJobsForScoring,
   skillKeywordsFor,
@@ -16,7 +21,8 @@ import {
 // Phase 3 checkpoint 3b-1: the pre-filter, selection and scoring prompt were
 // moved out of app/api/match/route.ts unchanged. The reference below is the
 // match/v1 code as it was in the route at f9cd6ac, copied verbatim (only
-// wrapped in functions); the extracted code must produce identical output.
+// wrapped in functions). Selection must still match it exactly; since 3b-3
+// (match/v2) the prompt may differ from it only in the REQUIRES text.
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- verbatim copy of the v1 route code */
 function referenceSelectionV1(candidate: any, jobs: any[]) {
@@ -274,28 +280,63 @@ describe("3b-1: job selection is unchanged from match/v1", () => {
   });
 });
 
-describe("3b-1: the scoring prompt is unchanged from match/v1", () => {
+// A full description as stored from Reed's details API (htmlToText output).
+const FULL_REED =
+  "About us\n\nWe build banking apps used by millions of customers across the UK.\n\n" +
+  Array.from({ length: 60 }, (_, i) => `- Requirement ${i + 1}: Java, Kotlin, SQL and Docker in production`).join("\n");
+
+describe("3b-3: the match/v2 prompt differs from v1 only in the description", () => {
   const long = "Requirements: ".padEnd(400, "java kotlin react ");
   const jobs: Job[] = [
     ...handPicked,
     { title: "Java Developer", company: "Long", description: long },
     { title: "Java Developer", company: "Exact", description: "x".repeat(150) },
+    { title: "Java Developer", company: "Full", description: FULL_REED },
     ...generatedJobs(3, 30),
   ];
 
-  test("identical prompt text for every job, position and candidate", () => {
+  /** The v1 prompt with its REQUIRES text swapped for `description`, bounded. */
+  const expectedV2 = (cand: MatchCandidate, job: Job, index: number, description: string) => {
+    const v1 = referencePromptV1(cand, job, index);
+    const v1Line = `\nREQUIRES: ${(job.description || "").slice(0, 150)}\n`;
+    assert.equal(v1.split(v1Line).length, 2, "the REQUIRES line appears once");
+    return v1.replace(v1Line, `\nREQUIRES: ${boundDescription(description, SCORING_DESCRIPTION_CHARS)}\n`);
+  };
+
+  test("every other line is identical to v1, for every job, position and candidate", () => {
     for (const cand of candidates.filter((c) => Array.isArray(c.technicalSkills))) {
       jobs.forEach((job, index) => {
-        assert.equal(buildMatchPrompt(cand, job, index), referencePromptV1(cand, job, index));
+        // The description sent in (the default) …
+        assert.equal(buildMatchPrompt(cand, job, index), expectedV2(cand, job, index, job.description || ""));
+        // … or a stored description passed explicitly.
+        assert.equal(buildMatchPrompt(cand, job, index, FULL_REED), expectedV2(cand, job, index, FULL_REED));
       });
     }
   });
 
-  test("still limited to the first 150 characters of the description", () => {
-    assert.equal(SCORING_DESCRIPTION_CHARS, 150);
-    const prompt = buildMatchPrompt(candidate, { title: "T", company: "C", description: long }, 0);
-    assert.ok(prompt.includes(`REQUIRES: ${long.slice(0, 150)}\n`));
-    assert.equal(prompt.includes(long.slice(0, 151)), false);
+  test("search snippets are no longer cut at 150 characters: they fit whole", () => {
+    assert.equal(SCORING_DESCRIPTION_CHARS, 2000);
+    for (const snippet of ["a".repeat(500), `${"word ".repeat(90)}...`.slice(0, 453), long]) {
+      const prompt = buildMatchPrompt(candidate, { title: "T", company: "C" }, 0, snippet);
+      assert.ok(prompt.includes(`\nREQUIRES: ${snippet}\n`));
+    }
+  });
+
+  test("a full description is bounded to 2,000 characters, cut at a word", () => {
+    assert.ok(FULL_REED.length > 3000);
+    const prompt = buildMatchPrompt(candidate, { title: "T", company: "C" }, 0, FULL_REED);
+    const requires = prompt.slice(prompt.indexOf("\nREQUIRES: ") + 11, prompt.indexOf("\n\nOutput JSON only."));
+    assert.ok(requires.length <= SCORING_DESCRIPTION_CHARS + 1);
+    assert.ok(requires.length > 1900);
+    assert.ok(requires.endsWith("…"));
+    assert.ok(FULL_REED.startsWith(requires.slice(0, -1)));
+    assert.ok(/[\s]/.test(FULL_REED[requires.length - 1]), "cut at a space or line break");
+  });
+
+  test("an empty description gives an empty REQUIRES line, as in v1", () => {
+    const prompt = buildMatchPrompt(candidate, { title: "T", company: "C" }, 0, "");
+    assert.ok(prompt.includes("\nREQUIRES: \n"));
+    assert.equal(buildMatchPrompt(candidate, { title: "T", company: "C" }, 0), prompt);
   });
 
   test("a candidate without technicalSkills still throws, as before", () => {
@@ -305,12 +346,70 @@ describe("3b-1: the scoring prompt is unchanged from match/v1", () => {
   });
 });
 
+describe("3b-3: boundDescription", () => {
+  test("text that fits is unchanged", () => {
+    assert.equal(boundDescription("", 10), "");
+    assert.equal(boundDescription("exactly 10", 10), "exactly 10");
+  });
+
+  test("longer text is cut at the last space or line break and ends with …", () => {
+    assert.equal(boundDescription("one two three four", 12), "one two…");
+    assert.equal(boundDescription("line one\nline two", 12), "line one…");
+    assert.equal(boundDescription("trailing   spaces here", 13), "trailing…");
+  });
+
+  test("with no break in the second half, it cuts mid-word", () => {
+    assert.equal(boundDescription("a " + "x".repeat(30), 10), "a xxxxxxxx…");
+    assert.equal(boundDescription("y".repeat(30), 10), "yyyyyyyyyy…");
+  });
+});
+
+describe("3b-3: the prompt fits the model's context", () => {
+  test("Ollama settings are unchanged and the budget is the context minus the answer", () => {
+    assert.equal(MATCH_NUM_CTX, 2048);
+    assert.equal(MATCH_NUM_PREDICT, 400);
+    assert.equal(MATCH_PROMPT_TOKEN_BUDGET, 1648);
+  });
+
+  test("truncation is flagged at the budget or by too many characters per token", () => {
+    // Measured with llama3.2:3b: normal prompts, and an uncapped prompt Ollama cut.
+    assert.equal(promptMayBeTruncated(2504, 590), false);
+    assert.equal(promptMayBeTruncated(4352, 979), false);
+    assert.equal(promptMayBeTruncated(4992, 1139), false);
+    assert.equal(promptMayBeTruncated(12802, 1026), true);
+    assert.equal(promptMayBeTruncated(7000, 1648), true);
+    assert.equal(promptMayBeTruncated(4000, undefined), false);
+    assert.equal(promptMayBeTruncated(4000, 0), false);
+  });
+
+  test("a long CV with a full description stays under the budget (≥ 3.5 characters per token)", () => {
+    // Larger than the live profile (22 skills, 665-character summary).
+    const bigCandidate: MatchCandidate = {
+      technicalSkills: Array.from({ length: 30 }, (_, i) => `Skill number ${i}`),
+      summary: "Graduate software engineer with production experience. ".repeat(18).slice(0, 1000),
+      experienceLevel: "Graduate",
+    };
+    const prompt = buildMatchPrompt(
+      bigCandidate,
+      { title: "Graduate Software Engineer (Java / Kotlin)", company: "A Long Company Name Ltd" },
+      9,
+      FULL_REED
+    );
+    assert.ok(prompt.length / 3.5 < MATCH_PROMPT_TOKEN_BUDGET, `${prompt.length} characters`);
+  });
+});
+
 describe("3b-1: /api/match uses the extracted pipeline", () => {
   const source = fs.readFileSync(path.join(import.meta.dirname, "..", "app/api/match/route.ts"), "utf8");
 
   test("the route calls selectJobsForScoring and buildMatchPrompt", () => {
     assert.match(source, /selectJobsForScoring<IncomingJob>\(jobs, candidate\)/);
-    assert.match(source, /const jobPrompt = buildMatchPrompt\(candidate, job, index\);/);
+    assert.match(source, /const jobPrompt = buildMatchPrompt\(candidate, job, index, scoringDescriptionFor\(db, job\)\);/);
+  });
+
+  test("Ollama options come from the shared constants", () => {
+    assert.match(source, /num_predict: MATCH_NUM_PREDICT,\s*num_ctx: MATCH_NUM_CTX,/);
+    assert.match(source, /if \(promptMayBeTruncated\(jobPrompt\.length, data\.prompt_eval_count\)\) \{\s*console\.warn/);
   });
 
   test("no copy of the filter, ranking or prompt is left in the route", () => {
@@ -319,7 +418,7 @@ describe("3b-1: /api/match uses the extracted pipeline", () => {
     }
   });
 
-  test("the prompt version is still match/v1", () => {
-    assert.match(source, /const MATCH_PROMPT_VERSION = "match\/v1";/);
+  test("the prompt version is match/v2", () => {
+    assert.match(source, /const MATCH_PROMPT_VERSION = "match\/v2";/);
   });
 });

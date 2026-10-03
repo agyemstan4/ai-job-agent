@@ -139,7 +139,10 @@ your skills, no senior title), scores the top 10 with the local model
 outcome. Scored jobs are also marked as seen so they don't reappear.
 Before scoring, the full description of each selected Reed job is fetched
 once from Reed's job details API (runs started from the UI only) and stored;
-if the request fails, the search snippet is used.
+if the request fails, the search snippet is used. The model scores each job
+against its best stored description (the full text, else the longest
+snippet), up to 2,000 characters; the pre-filter and ranking use the search
+snippet. Matches record the prompt version (`match/v2`).
 
 ### CV and application preparation
 For each selected job the page calls `/api/tailor-cv`, `/api/generate-cv-docx`

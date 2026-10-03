@@ -32,8 +32,48 @@ export const SENIOR_TITLE_PATTERN = /\b(senior|lead|principal|staff|architect|ma
 // up to 10 applications per day.
 export const MAX_JOBS_TO_SCORE = 10;
 
-/** How much of the job description the scoring prompt includes. */
-export const SCORING_DESCRIPTION_CHARS = 150;
+// Ollama settings for a scoring call. The prompt and the answer share the
+// context window, so the prompt must fit in MATCH_PROMPT_TOKEN_BUDGET tokens:
+// a longer prompt is cut from the START by Ollama, silently losing the
+// instructions and the candidate.
+export const MATCH_NUM_CTX = 2048;
+export const MATCH_NUM_PREDICT = 400;
+export const MATCH_PROMPT_TOKEN_BUDGET = MATCH_NUM_CTX - MATCH_NUM_PREDICT;
+
+/**
+ * How much of the job description the scoring prompt includes (match/v2;
+ * v1 used 150). Search snippets (Adzuna ≤ 500, Reed 453 characters) fit
+ * whole; a full Reed description is cut at a word. Measured with
+ * llama3.2:3b on synthetic prompts (4.2–4.45 characters per token): a
+ * v1-sized prompt is ~590 tokens, a snippet ~660, a 2,000-character
+ * description with a typical CV ~980, and with a larger CV (30 skills,
+ * 1,000-character summary) ~1,140 — still 500 below the budget.
+ */
+export const SCORING_DESCRIPTION_CHARS = 2000;
+
+/**
+ * Whether Ollama probably cut the prompt. Ollama reports the token count
+ * AFTER cutting (a 12,800-character prompt was reported as 1,026 tokens),
+ * so besides reaching the budget, a prompt with far more characters per
+ * token than normal text (~4.2–4.5) is also flagged.
+ */
+export function promptMayBeTruncated(promptChars: number, promptTokens: number | undefined): boolean {
+  if (!promptTokens) return false;
+  return promptTokens >= MATCH_PROMPT_TOKEN_BUDGET || promptChars > promptTokens * 6;
+}
+
+/**
+ * The first maxChars characters of a description, cut back to the last
+ * space or line break (if one is in the second half) and ended with "…".
+ * Text that fits is returned unchanged.
+ */
+export function boundDescription(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const head = text.slice(0, maxChars);
+  const lastBreak = Math.max(head.lastIndexOf(" "), head.lastIndexOf("\n"));
+  const cut = lastBreak >= maxChars / 2 ? head.slice(0, lastBreak) : head;
+  return `${cut.trimEnd()}…`;
+}
 
 /** The stored job ID, or null for jobs that were not recorded. */
 export function jobIdOf(job: MatchJob | null | undefined): number | null {
@@ -108,10 +148,18 @@ export function selectJobsForScoring<T extends MatchJob>(jobs: T[], candidate: M
 
 /**
  * The scoring prompt for one job (`index` is its 0-based position in
- * selectedJobs). Bump MATCH_PROMPT_VERSION in the route when this changes.
- * Throws if the candidate has no technicalSkills array, as before.
+ * selectedJobs). `description` is the text to score against — the job's
+ * best stored description (see scoringDescriptionFor), else the one sent in —
+ * and is bounded to SCORING_DESCRIPTION_CHARS. Bump MATCH_PROMPT_VERSION in
+ * the route when this changes. Throws if the candidate has no
+ * technicalSkills array, as before.
  */
-export function buildMatchPrompt(candidate: MatchCandidate, job: MatchJob, index: number): string {
+export function buildMatchPrompt(
+  candidate: MatchCandidate,
+  job: MatchJob,
+  index: number,
+  description: string = job.description || ""
+): string {
   return `
 You are a job matcher. Score how well this candidate matches this job.
 
@@ -120,7 +168,7 @@ CANDIDATE BACKGROUND: ${candidate.summary}
 EXPERIENCE LEVEL: ${candidate.experienceLevel}
 
 JOB: ${job.title} at ${job.company}
-REQUIRES: ${(job.description || "").slice(0, SCORING_DESCRIPTION_CHARS)}
+REQUIRES: ${boundDescription(description, SCORING_DESCRIPTION_CHARS)}
 
 Output JSON only. No explanation outside JSON.
 
