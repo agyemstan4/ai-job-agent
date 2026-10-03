@@ -8,12 +8,11 @@ import {
   Document, Packer, Paragraph, TextRun, AlignmentType,
   BorderStyle, convertInchesToTwip,
 } from "docx";
-import { Resend } from "resend";
+import { sendEmailCopy, tailoredCvEmail } from "@/lib/email-copies";
 
 export const runtime = "nodejs";
 
 const execAsync = promisify(exec);
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ── Skill categories ──────────────────────────────────────────────────────────
 const SKILL_CATEGORIES: Record<string, string[]> = {
@@ -278,21 +277,12 @@ export async function POST(req: Request) {
       unlink(tmpPdf).catch(() => {}),
     ]);
 
-    // Email PDF
-    const jobTitle = job?.title || "Role";
     const jobCompany = job?.company || "Company";
     const fileName = buildFileName(tailoredCV.name, jobCompany, "pdf");
 
-    resend.emails.send({
-      from: "onboarding@resend.dev",
-      to: "agyemangstanley1@gmail.com",
-      subject: `Tailored CV — ${jobTitle} at ${jobCompany}`,
-      text: `Your tailored CV for ${jobTitle} at ${jobCompany} is attached as a PDF.`,
-      attachments: [{
-        filename: fileName,
-        content: Buffer.from(pdfBuffer).toString("base64"),
-      }],
-    }).catch((err: any) => console.error("Resend email failed:", err));
+    // Email copy of the PDF, only if enabled (EMAIL_COPIES_ENABLED); in the
+    // background — it never blocks or fails the response.
+    void sendEmailCopy(tailoredCvEmail(job, { filename: fileName, content: pdfBuffer, format: "pdf" }));
 
     // Return PDF to browser for download
     return new NextResponse(new Uint8Array(pdfBuffer), {
@@ -313,20 +303,11 @@ export async function POST(req: Request) {
 }
 
 async function sendDocxFallback(buffer: Buffer, tailoredCV: any, job: any) {
-  const jobTitle = job?.title || "Role";
   const jobCompany = job?.company || "Company";
   const fileName = buildFileName(tailoredCV.name, jobCompany, "docx");
 
-  resend.emails.send({
-    from: "onboarding@resend.dev",
-    to: "agyemangstanley1@gmail.com",
-    subject: `Tailored CV — ${jobTitle} at ${jobCompany}`,
-    text: `Your tailored CV for ${jobTitle} at ${jobCompany} is attached.`,
-    attachments: [{
-      filename: fileName,
-      content: Buffer.from(buffer).toString("base64"),
-    }],
-  }).catch((err: any) => console.error("Resend email failed:", err));
+  // Email copy of the DOCX, only if enabled (EMAIL_COPIES_ENABLED).
+  void sendEmailCopy(tailoredCvEmail(job, { filename: fileName, content: buffer, format: "docx" }));
 
   return new NextResponse(new Uint8Array(buffer), {
     status: 200,

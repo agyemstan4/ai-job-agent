@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
-import { Resend } from "resend";
-
-const resend = new Resend(process.env.RESEND_API_KEY);
+import { coverLetterEmail, sendEmailCopy } from "@/lib/email-copies";
 
 const longTimeoutAgent = new Agent({
   headersTimeout: 600000,
@@ -66,13 +64,9 @@ NEVER start with "I am writing to" or "I would like to apply". Start with someth
       );
     }
 
-    // Send email in background — don't block the response
-    resend.emails.send({
-      from: "onboarding@resend.dev",
-      to: "agyemangstanley1@gmail.com",
-      subject: `Cover Letter — ${job.title} at ${job.company}`,
-      text: `Here is your generated cover letter for ${job.title} at ${job.company}:\n\n${coverLetter}`,
-    }).catch((err: any) => console.error("Resend email failed:", err));
+    // Email copy, only if enabled (EMAIL_COPIES_ENABLED); in the background —
+    // it never blocks or fails the response.
+    void sendEmailCopy(coverLetterEmail(job, coverLetter));
 
     return NextResponse.json({ coverLetter });
 
