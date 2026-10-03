@@ -42,6 +42,7 @@ app/                       Next.js App Router (UI pages + API routes)
   page.tsx                 CV upload, job search, matching, batch preparation
   review/page.tsx          review queue: edit, approve, reject
   applications/page.tsx    tracker: Apply Now, Mark as applied, status updates
+  preferences/page.tsx     search preferences: terms, location, exclusions, salary floor
   api/                     route handlers (thin: validate, call lib, respond)
 lib/
   database.ts, db.ts       opens SQLite and applies pending migrations
@@ -53,6 +54,7 @@ lib/
                            matching, applications (batch save), review actions
   generation/versions.ts   model and prompt versions for preparation
   tracker-client.ts        framework-free client logic for /applications
+  preferences-client.ts    framework-free client logic for /preferences
   ollama-json.ts           safe parsing of model JSON output
   email-copies.ts          optional email copies (off by default)
   log-safety.ts            redacts URLs/keys from logged errors
@@ -133,9 +135,9 @@ already processed if it was scored or filtered out for your current profile,
 or if any of its listings is in the original `seen_jobs` table.
 
 ### Search preferences
-Saved with your candidate record (`GET`/`PUT /api/preferences`; there is no
-page for them yet). Send `{ "preferences": { ... } }` to save, or
-`{ "preferences": null }` to clear:
+Edit them on `/preferences` ("⚙️ Search preferences" on the main page). They
+are saved with your candidate record through `GET`/`PUT /api/preferences`
+(`{ "preferences": { ... } }` to save, `{ "preferences": null }` to clear):
 
 | Field | Rule | Effect |
 |---|---|---|

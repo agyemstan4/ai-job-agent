@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 // The CV route names the file (and picks .pdf or the .docx fallback) in its
 // Content-Disposition header; fall back to a PDF-style name if it's missing.
@@ -466,6 +467,9 @@ if (combinedData.structuredCV) {
             <a href="/applications" className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
               🗂 Applications
             </a>
+            <Link href="/preferences" className="rounded-lg bg-gray-800 px-4 py-2 font-semibold text-white hover:bg-gray-700">
+              ⚙️ Search preferences
+            </Link>
           </div>
         </div>
         <p className="mt-2 text-gray-600">
