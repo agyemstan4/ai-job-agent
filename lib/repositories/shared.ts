@@ -119,6 +119,26 @@ export function nowIso(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19);
 }
 
+const DB_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+/**
+ * A user-supplied time as stored in the database: UTC "YYYY-MM-DD HH:MM:SS"
+ * (the format migration 005 requires). Accepts a Date (truncated to the
+ * second) or a string already in that format that is a real date and time.
+ * Throws INVALID_TIMESTAMP otherwise.
+ */
+export function toDbTimestamp(value: Date | string): string {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new PersistenceError("INVALID_TIMESTAMP", "Invalid date");
+    return value.toISOString().replace("T", " ").slice(0, 19);
+  }
+  const parsed = DB_TIMESTAMP.test(value) ? new Date(`${value.replace(" ", "T")}Z`) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().replace("T", " ").slice(0, 19) !== value) {
+    throw new PersistenceError("INVALID_TIMESTAMP", `"${value}" is not a valid UTC time (YYYY-MM-DD HH:MM:SS)`);
+  }
+  return value;
+}
+
 export function mimeTypeForFilename(filename: string | null | undefined): string {
   const lower = (filename || "").toLowerCase();
   if (lower.endsWith(".docx")) {

@@ -1,5 +1,5 @@
 import type { DB } from "./shared.ts";
-import { assetSetHash, fromJson, nowIso, PersistenceError, sha256, toJson } from "./shared.ts";
+import { assetSetHash, fromJson, nowIso, PersistenceError, sha256, toDbTimestamp, toJson } from "./shared.ts";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -358,7 +358,7 @@ export function transitionApplication(
   db: DB,
   id: number,
   to: ApplicationStatus,
-  options: { actor: Actor; detail?: string | null; error?: string | null }
+  options: { actor: Actor; detail?: string | null; error?: string | null; payload?: unknown }
 ): Application {
   if (GATED_STATUSES.includes(to)) {
     throw new PersistenceError(
@@ -381,6 +381,7 @@ export function transitionApplication(
       toStatus: to,
       actor: options.actor,
       detail: options.detail,
+      payload: options.payload,
     });
     // Leaving approval before submission (re-review, rejection, withdrawal)
     // clears the snapshot; after submission it is kept as a record.
@@ -685,7 +686,16 @@ export function beginSubmission(
 export function recordSubmissionResult(
   db: DB,
   id: number,
-  result: { success: true; reference?: string | null } | { success: false; error: string },
+  result:
+    | {
+        success: true;
+        reference?: string | null;
+        /** When it was submitted (validated by the caller and migration 005); default now. */
+        submittedAt?: string;
+        detail?: string;
+        payload?: unknown;
+      }
+    | { success: false; error: string },
   actor: Actor = "system"
 ): Application {
   return db.transaction(() => {
@@ -704,16 +714,351 @@ export function recordSubmissionResult(
       fromStatus: "submitting",
       toStatus: to,
       actor,
-      detail: result.success ? "Submitted" : result.error,
+      detail: result.success ? result.detail ?? "Submitted" : result.error,
+      payload: result.success ? result.payload : undefined,
     });
     setStatus(
       db,
       id,
       to,
       result.success
-        ? { submitted_at: nowIso(), submission_reference: result.reference ?? null, last_error: null }
+        ? {
+            submitted_at: result.submittedAt ?? nowIso(),
+            submission_reference: result.reference ?? null,
+            last_error: null,
+          }
         : { last_error: result.error }
     );
     return getApplication(db, id)!;
   })();
+}
+
+// ── Manual submission tracking (Phase 2) ────────────────────────────────────
+//
+// The user applies on the employer's site themselves, then records it here.
+// Nothing in this section submits anything anywhere, and opening a job's
+// website never calls it. Every write is a user action (actor "user"), which
+// migration 005 also enforces in the database.
+
+export type SubmittedContent = "as_approved" | "modified_externally";
+
+export type PostSubmissionStatus = "acknowledged" | "interviewing" | "offer" | "unsuccessful" | "withdrawn";
+
+export const POST_SUBMISSION_STATUSES: readonly PostSubmissionStatus[] = [
+  "acknowledged",
+  "interviewing",
+  "offer",
+  "unsuccessful",
+  "withdrawn",
+];
+
+export const MAX_SUBMISSION_REFERENCE_LENGTH = 200;
+
+// Submitted applications that can still move on (unsuccessful and withdrawn are final).
+const OPEN_SUBMITTED_STATUSES: ApplicationStatus[] = ["submitted", "acknowledged", "interviewing", "offer"];
+const CLOSED_SUBMITTED_STATUSES: ApplicationStatus[] = ["unsuccessful", "withdrawn"];
+
+function cleanText(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  return text ? text : null;
+}
+
+function cleanReference(value: string | null | undefined): string | null {
+  const reference = cleanText(value);
+  if (reference !== null && reference.length > MAX_SUBMISSION_REFERENCE_LENGTH) {
+    throw new PersistenceError(
+      "INVALID_INPUT",
+      `A submission reference can be at most ${MAX_SUBMISSION_REFERENCE_LENGTH} characters`
+    );
+  }
+  return reference;
+}
+
+function requireNotInFuture(timestamp: string, what: string): void {
+  if (timestamp > nowIso()) {
+    throw new PersistenceError("INVALID_TIMESTAMP", `${what} cannot be in the future`);
+  }
+}
+
+export type ManualSubmissionInput = {
+  /** Hash of the content the user confirmed; must be the approved content. */
+  reviewedAssetsSha256: string;
+  /** When the user applied (default now). May be earlier, never future or before approval. */
+  submittedAt?: Date | string | null;
+  reference?: string | null;
+  note?: string | null;
+  /** Whether what was sent matches the approved Job Agent content (default "as_approved"). */
+  submittedContent?: SubmittedContent;
+  /** Required when submittedContent is "modified_externally": what the user changed. */
+  externalChanges?: string | null;
+};
+
+/**
+ * Records that the user applied on the employer's site themselves. Only an
+ * approved application qualifies, and only for exactly the approved content.
+ * Moves approved → submitting → submitted through the existing gate
+ * (beginSubmission / recordSubmissionResult) with actor "user", method
+ * "manual", in one transaction. The approval snapshot is kept unchanged.
+ */
+export function recordManualSubmission(db: DB, id: number, input: ManualSubmissionInput): Application {
+  return db.transaction((): Application => {
+    const application = requireApplication(db, id);
+    if (application.status !== "approved") {
+      throw new PersistenceError(
+        "APPROVAL_REQUIRED",
+        `Application ${id} is ${application.status}; only an approved application can be marked as applied`
+      );
+    }
+    if (!application.approvedAt || !application.approvedAssetsSha256 || !application.approvedAssetIds) {
+      throw new PersistenceError("APPROVAL_REQUIRED", `Application ${id} has no approval snapshot; approve it first`);
+    }
+    if (input.reviewedAssetsSha256 !== application.approvedAssetsSha256) {
+      throw new PersistenceError(
+        "STALE_REVIEW",
+        `The content confirmed for application ${id} is not the approved content; review it again`
+      );
+    }
+
+    const submittedAt = input.submittedAt == null ? nowIso() : toDbTimestamp(input.submittedAt);
+    requireNotInFuture(submittedAt, "The application date");
+    if (submittedAt < application.approvedAt) {
+      throw new PersistenceError(
+        "INVALID_TIMESTAMP",
+        `The application date cannot be before the approval (${application.approvedAt} UTC)`
+      );
+    }
+
+    const submittedContent = input.submittedContent ?? "as_approved";
+    if (submittedContent !== "as_approved" && submittedContent !== "modified_externally") {
+      throw new PersistenceError("INVALID_INPUT", `Unknown submitted content: ${String(submittedContent)}`);
+    }
+    const externalChanges = cleanText(input.externalChanges);
+    if (submittedContent === "modified_externally" && externalChanges === null) {
+      throw new PersistenceError("INVALID_INPUT", "Describe what was changed on the employer's site");
+    }
+    if (submittedContent === "as_approved" && externalChanges !== null) {
+      throw new PersistenceError("INVALID_INPUT", "External changes only apply when the content was modified");
+    }
+    const reference = cleanReference(input.reference);
+
+    const note = cleanText(input.note);
+    if (note !== null) addApplicationNote(db, id, note, "user");
+
+    // The existing gate: a current user approval of exactly the current content.
+    beginSubmission(db, id, { method: "manual", actor: "user" });
+    return recordSubmissionResult(
+      db,
+      id,
+      {
+        success: true,
+        reference,
+        submittedAt,
+        detail: "Applied by the user on the employer's site",
+        payload: { method: "manual", submittedAt, reference, submittedContent, externalChanges, recordedAt: nowIso() },
+      },
+      "user"
+    );
+  })();
+}
+
+/**
+ * A later status update for a submitted application (acknowledged,
+ * interviewing, offer, unsuccessful or withdrawn), following the existing
+ * forward-only rules. occurredAt (optional) says when it happened: not in
+ * the future and not before the submission.
+ */
+export function updateSubmittedStatus(
+  db: DB,
+  id: number,
+  input: { to: PostSubmissionStatus; occurredAt?: Date | string | null; note?: string | null }
+): Application {
+  if (!POST_SUBMISSION_STATUSES.includes(input.to)) {
+    throw new PersistenceError("INVALID_TRANSITION", `"${String(input.to)}" is not a post-submission status`);
+  }
+  return db.transaction((): Application => {
+    const application = requireApplication(db, id);
+    if (application.submittedAt === null || !OPEN_SUBMITTED_STATUSES.includes(application.status)) {
+      throw new PersistenceError(
+        "INVALID_TRANSITION",
+        `Application ${id} is ${application.status}; only an open submitted application can be updated`
+      );
+    }
+    let occurredAt: string | null = null;
+    if (input.occurredAt != null) {
+      occurredAt = toDbTimestamp(input.occurredAt);
+      requireNotInFuture(occurredAt, "The date of this update");
+      if (occurredAt < application.submittedAt) {
+        throw new PersistenceError(
+          "INVALID_TIMESTAMP",
+          `The date of this update cannot be before the application was submitted (${application.submittedAt} UTC)`
+        );
+      }
+    }
+    const note = cleanText(input.note);
+    if (note !== null) addApplicationNote(db, id, note, "user");
+
+    // The existing state machine decides which moves are allowed.
+    return transitionApplication(db, id, input.to, {
+      actor: "user",
+      detail: `Updated by the user: ${input.to}`,
+      payload: occurredAt === null ? undefined : { occurredAt },
+    });
+  })();
+}
+
+/**
+ * Adds, changes or clears the reference of a submitted application. Every
+ * change is recorded first as a user "external_update" event (migration 005
+ * refuses unrecorded changes). Setting the same value again changes nothing.
+ */
+export function setSubmissionReference(db: DB, id: number, reference: string | null): Application {
+  return db.transaction((): Application => {
+    const application = requireApplication(db, id);
+    if (application.submittedAt === null) {
+      throw new PersistenceError(
+        "INVALID_TRANSITION",
+        `Application ${id} has not been submitted; a reference can only be recorded after submission`
+      );
+    }
+    const next = cleanReference(reference);
+    if (next === application.submissionReference) return application;
+
+    insertEvent(db, {
+      applicationId: id,
+      eventType: "external_update",
+      actor: "user",
+      detail: next === null ? "Submission reference removed" : "Submission reference updated",
+      payload: { field: "submission_reference", from: application.submissionReference, to: next },
+    });
+    db.prepare("UPDATE applications SET submission_reference = ?, updated_at = ? WHERE id = ?").run(next, nowIso(), id);
+    return getApplication(db, id)!;
+  })();
+}
+
+// ── Tracker read helpers ─────────────────────────────────────────────────────
+
+/**
+ * to_apply — approved, not yet applied
+ * applied  — submitted and still open (submitted, acknowledged, interviewing, offer)
+ * closed   — submitted, then unsuccessful or withdrawn
+ * Applications withdrawn or rejected before submission are not tracked here.
+ */
+export type TrackerGroup = "to_apply" | "applied" | "closed";
+
+export function trackerGroupOf(application: Application): TrackerGroup | null {
+  if (application.status === "approved") return "to_apply";
+  if (application.submittedAt === null) return null;
+  if (OPEN_SUBMITTED_STATUSES.includes(application.status)) return "applied";
+  if (CLOSED_SUBMITTED_STATUSES.includes(application.status)) return "closed";
+  return null;
+}
+
+/** Tracked applications in one group (or all of them), most recent first. */
+export function listTrackedApplications(db: DB, group: TrackerGroup | "tracked"): Application[] {
+  const inList = (statuses: ApplicationStatus[]) => statuses.map((s) => `'${s}'`).join(", ");
+  const conditions: Record<TrackerGroup, string> = {
+    to_apply: "status = 'approved'",
+    applied: `submitted_at IS NOT NULL AND status IN (${inList(OPEN_SUBMITTED_STATUSES)})`,
+    closed: `submitted_at IS NOT NULL AND status IN (${inList(CLOSED_SUBMITTED_STATUSES)})`,
+  };
+  const where =
+    group === "tracked" ? Object.values(conditions).map((c) => `(${c})`).join(" OR ") : conditions[group];
+  return (
+    db
+      .prepare(
+        `SELECT * FROM applications WHERE ${where}
+         ORDER BY COALESCE(submitted_at, approved_at, updated_at) DESC, id DESC`
+      )
+      .all() as ApplicationRow[]
+  ).map(toApplication);
+}
+
+export type SubmissionRecord = {
+  method: SubmissionMethod | null;
+  submittedAt: string;
+  reference: string | null;
+  submittedContent: SubmittedContent | null;
+  externalChanges: string | null;
+  /** When the submission was recorded in the Job Agent (may be later than submittedAt). */
+  recordedAt: string;
+};
+
+type SubmissionPayload = {
+  submittedContent?: SubmittedContent;
+  externalChanges?: string | null;
+  recordedAt?: string;
+};
+
+/** How and when the application was submitted, or null if it has not been. */
+export function getSubmissionRecord(db: DB, id: number): SubmissionRecord | null {
+  const application = getApplication(db, id);
+  if (!application || application.submittedAt === null) return null;
+  const event = db
+    .prepare(
+      `SELECT * FROM application_events
+       WHERE application_id = ? AND event_type = 'submission_attempt' AND to_status = 'submitted'
+       ORDER BY id DESC LIMIT 1`
+    )
+    .get(id) as EventRow | undefined;
+  const payload = (event ? fromJson<SubmissionPayload>(event.payload_json) : null) ?? {};
+  return {
+    method: application.submissionMethod,
+    submittedAt: application.submittedAt,
+    reference: application.submissionReference,
+    submittedContent: payload.submittedContent ?? null,
+    externalChanges: payload.externalChanges ?? null,
+    recordedAt: payload.recordedAt ?? event?.created_at ?? application.submittedAt,
+  };
+}
+
+export type StatusHistoryEntry = {
+  eventId: number;
+  fromStatus: ApplicationStatus | null;
+  toStatus: ApplicationStatus;
+  actor: Actor | "migration";
+  detail: string | null;
+  /** When it happened, if the user said so; otherwise null (see recordedAt). */
+  occurredAt: string | null;
+  recordedAt: string;
+};
+
+/** Every status change of an application, oldest first. */
+export function listStatusHistory(db: DB, id: number): StatusHistoryEntry[] {
+  return listApplicationEvents(db, id)
+    .filter((event) => event.toStatus !== null)
+    .map((event) => {
+      const payload = (event.payload ?? {}) as { occurredAt?: unknown };
+      return {
+        eventId: event.id,
+        fromStatus: event.fromStatus,
+        toStatus: event.toStatus!,
+        actor: event.actor,
+        detail: event.detail,
+        occurredAt: typeof payload.occurredAt === "string" ? payload.occurredAt : null,
+        recordedAt: event.createdAt,
+      };
+    });
+}
+
+export type ReferenceChange = {
+  eventId: number;
+  from: string | null;
+  to: string | null;
+  actor: Actor | "migration";
+  recordedAt: string;
+};
+
+/** Every change of the submission reference after submission, oldest first. */
+export function listReferenceHistory(db: DB, id: number): ReferenceChange[] {
+  return listApplicationEvents(db, id)
+    .filter((event) => event.eventType === "external_update")
+    .map((event) => ({ event, payload: (event.payload ?? {}) as { field?: unknown; from?: unknown; to?: unknown } }))
+    .filter(({ payload }) => payload.field === "submission_reference")
+    .map(({ event, payload }) => ({
+      eventId: event.id,
+      from: typeof payload.from === "string" ? payload.from : null,
+      to: typeof payload.to === "string" ? payload.to : null,
+      actor: event.actor,
+      recordedAt: event.createdAt,
+    }));
 }
