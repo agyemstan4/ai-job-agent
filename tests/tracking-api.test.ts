@@ -314,6 +314,18 @@ describe("tracker read model", () => {
   });
 });
 
+describe("content locked after applying (regression found in 2e acceptance)", () => {
+  test("editing the cover letter of an application withdrawn after applying is refused (409), nothing written", () => {
+    const app = submittedApp();
+    act(app.id, { action: "update_status", to: "withdrawn", note: "Changed my mind" });
+    const events = eventCount(app.id);
+    const refusedEdit = answer(app.id, { action: "edit_cover_letter", coverLetter: "Rewritten after withdrawing" });
+    assert.deepEqual([refusedEdit.status, /ASSETS_LOCKED/.test(refusedEdit.message)], [409, true]);
+    assert.equal(eventCount(app.id), events);
+    assert.equal(item(app.id).coverLetter!.text, "Dear Acme");
+  });
+});
+
 describe("safety of the API layer", () => {
   test("unexpected errors never reach the client; known refusals do", () => {
     assert.equal(clientErrorMessage(new Error("SQLITE_IOERR: disk I/O error at C:\\dev\\...\\jobs.db"), "Failed"), "Failed");

@@ -427,6 +427,40 @@ describe("bypassing the repository with direct SQL stays blocked (migration 005 
   });
 });
 
+describe("content stays locked after submission (regression found in 2e acceptance)", () => {
+  // Migration 002 locks content from submitting through unsuccessful, but not
+  // for withdrawn; the repository keeps it locked for any submitted application.
+  test("no new content version in any status after submission, including withdrawn", () => {
+    const app = approvedApp();
+    submit(app);
+    const assetsBefore = getCurrentAssets(t.db, app.id).map((a) => [a.id, a.sha256]);
+    const tryEdit = () =>
+      addApplicationAsset(t.db, { applicationId: app.id, kind: "cover_letter", origin: "user_edit", contentText: "Late edit" });
+    for (const to of [null, "acknowledged", "interviewing", "withdrawn"] as const) {
+      if (to) updateSubmittedStatus(t.db, app.id, { to });
+      const events = eventCount(app.id);
+      assert.throws(tryEdit, /ASSETS_LOCKED/, String(to));
+      assert.equal(eventCount(app.id), events);
+    }
+    assert.deepEqual(getCurrentAssets(t.db, app.id).map((a) => [a.id, a.sha256]), assetsBefore);
+
+    const unsuccessful = approvedApp();
+    submit(unsuccessful);
+    updateSubmittedStatus(t.db, unsuccessful.id, { to: "unsuccessful" });
+    assert.throws(
+      () => addApplicationAsset(t.db, { applicationId: unsuccessful.id, kind: "tailored_cv_data", origin: "generated", contentJson: { x: 1 } }),
+      /ASSETS_LOCKED/
+    );
+  });
+
+  test("before submission nothing changes: edits still work, also on an application withdrawn before applying", () => {
+    const ready = readyApplication();
+    assert.equal(addApplicationAsset(t.db, { applicationId: ready.id, kind: "cover_letter", origin: "user_edit", contentText: "v2" }).version, 2);
+    const withdrawnEarly = transitionApplication(t.db, readyApplication().id, "withdrawn", { actor: "user" });
+    assert.equal(addApplicationAsset(t.db, { applicationId: withdrawnEarly.id, kind: "cover_letter", origin: "user_edit", contentText: "v2" }).version, 2);
+  });
+});
+
 /** "Now" in the stored format, floored to the second. */
 function nowFloor(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19);

@@ -419,7 +419,10 @@ export function listApplicationEvents(db: DB, id: number): ApplicationEvent[] {
 /**
  * Adds a new version of an asset and makes it current. Adding content to an
  * approved application withdraws the approval (enforced by DB trigger).
- * Content is locked once submission has started.
+ * Content is locked once submission has started (DB trigger), and stays
+ * locked once the application has been submitted — including after it is
+ * later withdrawn or unsuccessful, which the trigger does not cover — so the
+ * current content always remains what was submitted.
  */
 export function addApplicationAsset(
   db: DB,
@@ -447,7 +450,13 @@ export function addApplicationAsset(
   );
 
   return db.transaction(() => {
-    requireApplication(db, input.applicationId);
+    const application = requireApplication(db, input.applicationId);
+    if (application.submittedAt !== null) {
+      throw new PersistenceError(
+        "ASSETS_LOCKED",
+        "ASSETS_LOCKED: application content cannot change after the application has been submitted"
+      );
+    }
     const previous = db
       .prepare(
         `SELECT id, version FROM application_assets
