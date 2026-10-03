@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { TestDb } from "./helpers.ts";
 import { count, freshDb, quietly } from "./helpers.ts";
 import type { BatchResultInput } from "../lib/pipeline/applications.ts";
-import { saveBatchApplications } from "../lib/pipeline/applications.ts";
+import { saveBatchApplications, saveBatchRequest } from "../lib/pipeline/applications.ts";
 import { createCandidate, createProfileVersion } from "../lib/repositories/candidates.ts";
 import { recordJobListing } from "../lib/repositories/jobs.ts";
 import { recordMatch } from "../lib/repositories/matches.ts";
@@ -161,5 +161,74 @@ describe("saveBatchApplications", () => {
     assert.notEqual(saved[1].applicationId, null);
     assert.equal(count(t.db, "applications"), 1);
     assert.equal(count(t.db, "application_events", "application_id <> ?", saved[1].applicationId), 0);
+  });
+});
+
+describe("Step 10: the new tables are the only record", () => {
+  test("a result without a known jobId is saved by recording its job from the listing data", () => {
+    // Same listing as the stored job: merged into it, not duplicated.
+    const known = save([result({ jobId: undefined, matchId: undefined, job: { id: "adzuna_1", title: "Junior Dev", company: "Acme" } })]);
+    assert.equal(getApplication(t.db, known.saved[0].applicationId!)!.jobId, jobId);
+
+    // A listing never seen before becomes a new job.
+    const fresh = save([
+      result({
+        jobId: 9999,
+        matchId: undefined,
+        job: { id: "reed_77", title: "Kotlin Developer", company: "Gamma", location: "London", url: "https://example.com/77", salaryMin: 30000 },
+      }),
+    ]);
+    const app = getApplication(t.db, fresh.saved[0].applicationId!)!;
+    assert.notEqual(app.jobId, jobId);
+    assert.equal(count(t.db, "job_listings", "source_id = 'reed' AND external_id = '77'"), 1);
+  });
+
+  test("a result with no usable job details is reported, not saved", () => {
+    const { saved, warnings } = save([
+      result({ jobId: undefined, job: { id: "linkedin_5", title: "X", company: "Y" } }),
+      result({ jobId: undefined, job: { id: "adzuna_5", title: "", company: "Y" } }),
+    ]);
+    assert.deepEqual(saved.map((s) => s.applicationId), [null, null]);
+    assert.match(warnings[0], /no job details/);
+  });
+
+  test("saveBatchRequest saves the page's request body without touching the legacy tables", () => {
+    const before = {
+      runs: count(t.db, "batch_runs"),
+      results: count(t.db, "batch_results"),
+      seen: count(t.db, "seen_jobs"),
+    };
+    const outcome = saveBatchRequest(t.db, {
+      candidateProfileId: profileId,
+      results: [
+        {
+          job: { id: "adzuna_1", jobId, matchId, title: "Junior Dev", company: "Acme" },
+          coverLetter: "Dear Acme",
+          cvBase64: CV.toString("base64"),
+          cvFilename: "CV_Acme.pdf",
+          tailoredCV: { summary: "x" },
+          success: true,
+        },
+      ],
+    })!;
+    assert.deepEqual(outcome.warnings, []);
+    const app = getApplication(t.db, outcome.saved[0].applicationId!)!;
+    assert.equal(app.matchId, matchId);
+    assert.equal(app.candidateProfileId, profileId);
+    const file = getCurrentAssets(t.db, app.id).find((a) => a.kind === "tailored_cv_file")!;
+    assert.deepEqual(getAssetFile(t.db, file.id), CV);
+    assert.equal(outcome.saved[0].batchResultId, null);
+    assert.deepEqual(listApplicationEvents(t.db, app.id)[0].payload, { source: "batch", batchResultId: null });
+
+    assert.deepEqual(
+      { runs: count(t.db, "batch_runs"), results: count(t.db, "batch_results"), seen: count(t.db, "seen_jobs") },
+      before
+    );
+  });
+
+  test("saveBatchRequest rejects an empty or malformed body", () => {
+    assert.equal(saveBatchRequest(t.db, null), null);
+    assert.equal(saveBatchRequest(t.db, { results: [] }), null);
+    assert.equal(saveBatchRequest(t.db, { results: "nope" }), null);
   });
 });

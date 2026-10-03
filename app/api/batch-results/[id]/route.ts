@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getResultById,
-  updateResultStatus,
-  updateCoverLetter,
-} from "@/lib/db";
+import { getResultById } from "@/lib/db";
 
 export async function GET(
   _req: NextRequest,
@@ -36,26 +32,13 @@ export async function GET(
   }
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id: idParam } = await params;
-    const id = Number(idParam);
-    const body = await req.json();
-
-    if (body.status === "approved" || body.status === "rejected") {
-      updateResultStatus(id, body.status, body.notes);
-    }
-
-    if (body.coverLetter !== undefined) {
-      updateCoverLetter(id, body.coverLetter);
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("PATCH /api/batch-results/[id] error:", error);
-    return NextResponse.json({ error: "Failed to update result" }, { status: 500 });
-  }
+// Review decisions and edits are made on applications now; changing a legacy
+// row would make it disagree with its application.
+export async function PATCH() {
+  return NextResponse.json(
+    {
+      error: "The legacy review queue is read-only. Use PATCH /api/applications/{id} instead.",
+    },
+    { status: 410 }
+  );
 }

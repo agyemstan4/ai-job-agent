@@ -44,14 +44,11 @@ export function clearOldSeenJobs(olderThanDays = 30): void {
   ).run(`-${olderThanDays} days`);
 }
 
-// ── Batch Runs ──────────────────────────────────────────────
+// ── Legacy batch tables (read-only since Phase 1b Step 10) ─
+// Applications, assets and events are written instead; see
+// lib/pipeline/applications.ts.
 
-export function createBatchRun(jobCount: number): number {
-  const result = db
-    .prepare("INSERT INTO batch_runs (job_count) VALUES (?)")
-    .run(jobCount);
-  return result.lastInsertRowid as number;
-}
+// ── Batch Runs ──────────────────────────────────────────────
 
 export function getBatchRuns() {
   return db
@@ -71,57 +68,6 @@ export function getBatchRuns() {
 }
 
 // ── Batch Results ────────────────────────────────────────────
-
-export function saveBatchResult(data: {
-  batchRunId: number;
-  job: {
-    title: string;
-    company: string;
-    location?: string;
-    url?: string;
-    salaryMin?: number;
-    salaryMax?: number;
-    contractType?: string;
-    matchScore?: number;
-    reason?: string;
-  };
-  coverLetter?: string;
-  cvBuffer?: Buffer;
-  cvFilename?: string;
-  success: boolean;
-  error?: string;
-}): number {
-  const result = db
-    .prepare(
-      `INSERT INTO batch_results (
-        batch_run_id, job_title, job_company, job_location, job_url,
-        job_salary_min, job_salary_max, job_contract_type,
-        match_score, match_reason, cover_letter, cv_file, cv_filename, error,
-        status
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?
-      )`
-    )
-    .run(
-      data.batchRunId,
-      data.job.title,
-      data.job.company,
-      data.job.location ?? null,
-      data.job.url ?? null,
-      data.job.salaryMin ?? null,
-      data.job.salaryMax ?? null,
-      data.job.contractType ?? null,
-      data.job.matchScore ?? null,
-      data.job.reason ?? null,
-      data.coverLetter ?? null,
-      data.cvBuffer ?? null,
-      data.cvFilename ?? null,
-      data.error ?? null,
-      data.success ? "pending" : "failed"
-    );
-  return result.lastInsertRowid as number;
-}
 
 export function getBatchResults(status?: string) {
   if (status) {
@@ -153,24 +99,6 @@ export function getResultById(id: number) {
   return db
     .prepare("SELECT * FROM batch_results WHERE id = ?")
     .get(id) as any;
-}
-
-export function updateResultStatus(
-  id: number,
-  status: "approved" | "rejected",
-  notes?: string
-) {
-  db.prepare(
-    `UPDATE batch_results 
-     SET status = ?, reviewed_at = datetime('now'), notes = ?
-     WHERE id = ?`
-  ).run(status, notes ?? null, id);
-}
-
-export function updateCoverLetter(id: number, coverLetter: string) {
-  db.prepare(
-    "UPDATE batch_results SET cover_letter = ? WHERE id = ?"
-  ).run(coverLetter, id);
 }
 
 export default db;

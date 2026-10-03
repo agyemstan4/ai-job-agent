@@ -315,14 +315,21 @@ if (combinedData.structuredCV) {
         })
       );
 
-      const saveResponse = await fetch("/api/batch-results", {
+      const saveResponse = await fetch("/api/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ results: toSave, candidateProfileId }),
       });
+      const saveData = await saveResponse.json().catch(() => ({}));
       if (!saveResponse.ok) {
-        const saveData = await saveResponse.json().catch(() => ({}));
         throw new Error(saveData.error || `HTTP ${saveResponse.status}`);
+      }
+      // Results that could not be added (e.g. the job already has an
+      // application) are reported rather than silently dropped.
+      if (Array.isArray(saveData.warnings) && saveData.warnings.length > 0) {
+        alert(
+          `The batch was saved to the Review Queue, but some results were not added:\n\n${saveData.warnings.join("\n")}`
+        );
       }
     } catch (err) {
       console.error("Failed to persist batch results:", err);

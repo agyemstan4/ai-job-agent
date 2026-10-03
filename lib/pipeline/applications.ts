@@ -1,7 +1,7 @@
 import type { DB } from "../repositories/shared.ts";
 import { mimeTypeForFilename } from "../repositories/shared.ts";
 import { getProfile } from "../repositories/candidates.ts";
-import { getJob } from "../repositories/jobs.ts";
+import { getJob, recordJobListing } from "../repositories/jobs.ts";
 import { getMatch } from "../repositories/matches.ts";
 import {
   addApplicationAsset,
@@ -15,11 +15,26 @@ import {
 // Nothing is submitted anywhere: a prepared application stops at
 // ready_for_review, and only an explicit user approval moves it on.
 
+/** The job as the browser has it (a /api/match result). */
+export type BatchJobInput = {
+  id?: unknown;
+  source?: unknown;
+  title?: unknown;
+  company?: unknown;
+  location?: unknown;
+  url?: unknown;
+  salaryMin?: unknown;
+  salaryMax?: unknown;
+  contractType?: unknown;
+};
+
 export type BatchResultInput = {
   /** The legacy batch_results row written for the same result, if any. */
   batchResultId?: number | null;
   jobId?: unknown;
   matchId?: unknown;
+  /** Used to record the job when jobId is missing or unknown. */
+  job?: BatchJobInput | null;
   success: boolean;
   error?: string | null;
   coverLetter?: string | null;
@@ -37,22 +52,54 @@ export type SavedBatchResult = {
 
 const ASSET_MODEL = "llama3.2:3b";
 
+const str = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value : null;
+const num = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/**
+ * The stored job for a result: its jobId if known, otherwise the job is
+ * recorded from the result's own listing data ("adzuna_123" + title +
+ * company), merged by the usual deduplication. Null if neither is possible.
+ */
+function resolveJob(db: DB, result: BatchResultInput): number | null {
+  if (typeof result.jobId === "number" && getJob(db, result.jobId)) return result.jobId;
+  const job = result.job ?? {};
+  const id = str(job.id);
+  const sourceId = id?.startsWith("adzuna_") ? "adzuna" : id?.startsWith("reed_") ? "reed" : null;
+  const title = str(job.title);
+  const company = str(job.company);
+  if (!id || !sourceId || !title || !company) return null;
+  return recordJobListing(db, {
+    sourceId,
+    externalId: id.slice(sourceId.length + 1),
+    title,
+    company,
+    location: str(job.location),
+    url: str(job.url),
+    salaryMin: num(job.salaryMin),
+    salaryMax: num(job.salaryMax),
+    contractType: str(job.contractType),
+  }).jobId;
+}
+
 function saveOne(db: DB, candidateProfileId: number | null, result: BatchResultInput): SavedBatchResult {
   const base = { batchResultId: result.batchResultId ?? null, applicationId: null, status: null };
-  const jobId = typeof result.jobId === "number" ? result.jobId : null;
-  if (jobId === null || !getJob(db, jobId)) {
-    return { ...base, warning: "No stored job for this result; it was saved to the legacy queue only" };
-  }
-  const active = getActiveApplicationForJob(db, jobId);
-  if (active) {
-    return {
-      ...base,
-      warning: `Job ${jobId} already has application ${active.id} (${active.status}); no new application created`,
-    };
-  }
-  const match = typeof result.matchId === "number" ? getMatch(db, result.matchId) : null;
 
   return db.transaction((): SavedBatchResult => {
+    const jobId = resolveJob(db, result);
+    if (jobId === null) {
+      return { ...base, warning: "This result has no job details, so it could not be saved" };
+    }
+    const active = getActiveApplicationForJob(db, jobId);
+    if (active) {
+      return {
+        ...base,
+        warning: `Job ${jobId} already has application ${active.id} (${active.status}); no new application created`,
+      };
+    }
+    const match = typeof result.matchId === "number" ? getMatch(db, result.matchId) : null;
+
     const application = createApplication(db, {
       jobId,
       matchId: match && match.jobId === jobId ? match.id : null,
@@ -140,4 +187,36 @@ export function saveBatchApplications(
   });
   for (const result of saved) if (result.warning) warnings.push(result.warning);
   return { saved, warnings };
+}
+
+/**
+ * The batch save request sent by the main page (POST /api/applications, and
+ * the legacy alias POST /api/batch-results): { results, candidateProfileId }
+ * where each result is { job, coverLetter, cvBase64, cvFilename,
+ * tailoredCV, success, error }. Only the new tables are written.
+ */
+export function saveBatchRequest(
+  db: DB,
+  body: unknown
+): { saved: SavedBatchResult[]; warnings: string[] } | null {
+  const { results, candidateProfileId } = (body ?? {}) as { results?: unknown; candidateProfileId?: unknown };
+  if (!Array.isArray(results) || results.length === 0) return null;
+  return saveBatchApplications(db, {
+    candidateProfileId,
+    results: results.map((raw): BatchResultInput => {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const job = (r.job ?? null) as (BatchJobInput & { jobId?: unknown; matchId?: unknown }) | null;
+      return {
+        jobId: job?.jobId,
+        matchId: job?.matchId,
+        job,
+        success: Boolean(r.success),
+        error: str(r.error),
+        coverLetter: str(r.coverLetter),
+        cvFile: typeof r.cvBase64 === "string" && r.cvBase64 ? Buffer.from(r.cvBase64, "base64") : null,
+        cvFilename: str(r.cvFilename),
+        tailoredCv: r.tailoredCV,
+      };
+    }),
+  });
 }
