@@ -17,11 +17,14 @@ import {
   createApplication,
   getApplication,
   getCurrentAssetsHash,
+  recordManualSubmission,
   recordSubmissionResult,
   transitionApplication,
+  updateSubmittedStatus,
 } from "../lib/repositories/applications.ts";
 import { openDatabase, resolveDbPath, DEFAULT_DB_PATH } from "../lib/database.ts";
 import { MIGRATIONS, runMigrations } from "../lib/migrate.ts";
+import { sha256 } from "../lib/repositories/shared.ts";
 import type { Migration } from "../lib/migrate.ts";
 import {
   count,
@@ -383,7 +386,7 @@ describe("v4 → v5 upgrade (migration 005)", () => {
       const triggersBefore = triggerNames(db);
       for (const trigger of TRIGGERS_005) assert.equal(triggersBefore.has(trigger), false);
 
-      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") }));
+      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups"), migrations: MIGRATIONS.slice(0, 5) }));
       assert.deepEqual(result.applied, [5]);
       assert.deepEqual([result.fromVersion, result.toVersion], [4, 5]);
       assert.match(path.basename(result.backupPath!), /^jobs\.v4-to-v5\.\d{12}\.db$/);
@@ -416,7 +419,7 @@ describe("v4 → v5 upgrade (migration 005)", () => {
       assert.equal(getApplication(db, readyId)!.status, "ready_for_review");
 
       // Reopening applies nothing more.
-      assert.deepEqual(quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") })).applied, []);
+      assert.deepEqual(quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups"), migrations: MIGRATIONS.slice(0, 5) })).applied, []);
     } finally {
       db.close();
       removeTempDir(dir);
@@ -441,6 +444,136 @@ describe("v4 → v5 upgrade (migration 005)", () => {
       assert.equal((db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v, 4);
       for (const trigger of TRIGGERS_005) assert.equal(triggerNames(db).has(trigger), false);
       assert.deepEqual(fingerprint(db), before);
+    } finally {
+      db.close();
+      removeTempDir(dir);
+    }
+  });
+});
+
+describe("v5 → v6 upgrade (migration 006)", () => {
+  const TRIGGERS_006 = ["trg_application_assets_locked_withdrawn_insert", "trg_application_assets_locked_withdrawn_update"];
+  const names = (db: Database.Database) =>
+    new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as { name: string }[]).map((r) => r.name));
+  const version = (db: Database.Database) => (db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v;
+  const print = (db: Database.Database) => {
+    const tables = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY name")
+        .all() as { name: string }[]
+    ).map((r) => r.name);
+    return Object.fromEntries(
+      tables.map((t) => [t, createHash("sha256").update(JSON.stringify(db.prepare(`SELECT * FROM "${t}" ORDER BY rowid`).all())).digest("hex")])
+    );
+  };
+
+  /** A v5 database with data like the live one, plus applications in every Phase 2 state. */
+  function seedV5(db: Database.Database): { withdrawnId: number } {
+    seedSeenJobs(db, 167);
+    db.prepare("INSERT INTO batch_runs (job_count) VALUES (1)").run();
+    db.prepare("INSERT INTO batch_results (batch_run_id, job_title, job_company, status) VALUES (1, 'Old', 'Old Co', 'pending')").run();
+    const candidate = createCandidate(db, { fullName: "A Candidate" });
+    const profile = createProfileVersion(db, { candidateId: candidate.id, origin: "ai_extraction", analysis: {}, structuredCv: {} });
+    const prepare = (i: number) => {
+      const jobId = recordJobListing(db, { sourceId: "adzuna", externalId: `v5-${i}`, title: `Role ${i}`, company: "Acme" }).jobId;
+      const app = createApplication(db, { jobId, candidateProfileId: profile.id });
+      addApplicationAsset(db, { applicationId: app.id, kind: "cover_letter", origin: "generated", contentText: "Dear Acme" });
+      return transitionApplication(db, app.id, "ready_for_review", { actor: "system" });
+    };
+    const submit = (i: number) => {
+      const app = prepare(i);
+      const approved = approveApplication(db, app.id, { reviewedAssetsSha256: getCurrentAssetsHash(db, app.id) });
+      return recordManualSubmission(db, app.id, { reviewedAssetsSha256: approved.approvedAssetsSha256!, reference: `R-${i}` });
+    };
+    prepare(1); // ready for review
+    const approved = prepare(2);
+    approveApplication(db, approved.id, { reviewedAssetsSha256: getCurrentAssetsHash(db, approved.id) });
+    const acknowledged = submit(3);
+    updateSubmittedStatus(db, acknowledged.id, { to: "acknowledged" });
+    const withdrawn = submit(4);
+    updateSubmittedStatus(db, withdrawn.id, { to: "withdrawn", note: "Withdrawn before v6" });
+    return { withdrawnId: withdrawn.id };
+  }
+
+  test("a fresh database reaches v6 with both triggers and the correct checksum", () => {
+    const t = quietly(freshDb);
+    try {
+      assert.equal(version(t.db), 6);
+      for (const trigger of TRIGGERS_006) assert.ok(names(t.db).has(trigger), trigger);
+      const row = t.db.prepare("SELECT name, checksum FROM schema_migrations WHERE version = 6").get() as { name: string; checksum: string };
+      const m = MIGRATIONS[5];
+      assert.equal(row.name, "withdrawn_asset_lock");
+      assert.equal(row.checksum, sha256(`${m.version}:${m.name}:${m.checksumSource}`));
+    } finally {
+      t.close();
+    }
+  });
+
+  test("v5 → v6 keeps every row unchanged, backs up first, keeps earlier triggers, and locks withdrawn content", () => {
+    const dir = makeTempDir();
+    const db = new Database(path.join(dir, "jobs.db"));
+    try {
+      db.pragma("journal_mode = WAL");
+      db.pragma("foreign_keys = ON");
+      quietly(() => runMigrations(db, { migrations: MIGRATIONS.slice(0, 5) }));
+      const { withdrawnId } = seedV5(db);
+      const before = print(db);
+      const triggersBefore = names(db);
+
+      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") }));
+      assert.deepEqual(result.applied, [6]);
+      assert.deepEqual([result.fromVersion, result.toVersion], [5, 6]);
+      assert.deepEqual(result.checksumWarnings, []);
+      assert.match(path.basename(result.backupPath!), /^jobs\.v5-to-v6\.\d{12}\.db$/);
+
+      assert.deepEqual(print(db), before);
+      assert.equal(count(db, "seen_jobs"), 167);
+      assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
+      assert.deepEqual(db.pragma("foreign_key_check"), []);
+      const triggersAfter = names(db);
+      for (const trigger of triggersBefore) assert.ok(triggersAfter.has(trigger), trigger);
+      assert.equal(triggersAfter.size, triggersBefore.size + TRIGGERS_006.length);
+
+      const backup = new Database(result.backupPath!, { readonly: true });
+      try {
+        assert.equal(version(backup), 5);
+        assert.deepEqual(print(backup), before);
+      } finally {
+        backup.close();
+      }
+
+      // The application withdrawn before the upgrade is now locked in the database.
+      assert.throws(
+        () => db.prepare("UPDATE application_assets SET is_current = 0 WHERE application_id = ? AND is_current = 1").run(withdrawnId),
+        /ASSETS_LOCKED: application content cannot change after the application has been submitted/
+      );
+      assert.deepEqual(print(db), before);
+      assert.deepEqual(quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") })).applied, []);
+    } finally {
+      db.close();
+      removeTempDir(dir);
+    }
+  });
+
+  test("a failure while applying 006 leaves the database at v5", () => {
+    const dir = makeTempDir();
+    const db = new Database(path.join(dir, "jobs.db"));
+    try {
+      db.pragma("foreign_keys = ON");
+      quietly(() => runMigrations(db, { migrations: MIGRATIONS.slice(0, 5) }));
+      seedV5(db);
+      const before = print(db);
+      const failing006: Migration = {
+        ...MIGRATIONS[5],
+        up(target) {
+          MIGRATIONS[5].up(target);
+          throw new Error("boom after creating the triggers");
+        },
+      };
+      assert.throws(() => quietly(() => runMigrations(db, { migrations: [...MIGRATIONS.slice(0, 5), failing006] })), /boom/);
+      assert.equal(version(db), 5);
+      for (const trigger of TRIGGERS_006) assert.equal(names(db).has(trigger), false);
+      assert.deepEqual(print(db), before);
     } finally {
       db.close();
       removeTempDir(dir);
