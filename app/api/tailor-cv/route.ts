@@ -1,4 +1,17 @@
 import { NextResponse } from "next/server";
+import { fetch as undiciFetch, Agent } from "undici";
+import { parseOllamaJson } from "@/lib/ollama-json";
+
+const NUM_PREDICT = 1800;
+const NUM_CTX = 6144;
+
+// Ollama only replies once generation has finished. On CPU a tailored CV
+// takes 5-7 minutes (~1,300 tokens at ~4 tokens/s plus the prompt), longer
+// than the 5-minute default headers timeout of the built-in fetch.
+const longTimeoutAgent = new Agent({
+  headersTimeout: 1_200_000,
+  bodyTimeout: 1_200_000,
+});
 
 function reorderSkillsForJob(skills: string[], jobDescription: string): string[] {
   const jobText = jobDescription.toLowerCase();
@@ -74,18 +87,19 @@ ${degreeRule}
 - Do not explain your answer.
 `;
 
-    const ollamaResponse = await fetch("http://localhost:11434/api/generate", {
+    const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      dispatcher: longTimeoutAgent,
       body: JSON.stringify({
         model: "llama3.2:3b",
         prompt,
         stream: false,
         format: "json",
         options: {
-          num_predict: 1800,
+          num_predict: NUM_PREDICT,
           temperature: 0,
-          num_ctx: 6144,
+          num_ctx: NUM_CTX,
         },
       }),
     });
@@ -94,15 +108,20 @@ ${degreeRule}
       throw new Error(`Ollama error: ${ollamaResponse.status}`);
     }
 
-    const response = await ollamaResponse.json();
+    const response = (await ollamaResponse.json()) as {
+      response: string;
+      done_reason?: string;
+      eval_count?: number;
+    };
+    console.log("tailor-cv generated tokens:", response.eval_count ?? "N/A");
 
     let tailoredCV;
     try {
-      tailoredCV = JSON.parse(response.response);
+      tailoredCV = parseOllamaJson(response, NUM_PREDICT) as Record<string, unknown> & { skills?: unknown };
     } catch (error) {
       console.error("JSON PARSE FAILED");
       console.error(response.response);
-      throw new Error("Ollama returned invalid JSON");
+      throw error;
     }
 
     // Skills and projects are copied verbatim by the AI — reorder skills here in code, not via AI
