@@ -3,6 +3,13 @@ import { fetch as undiciFetch, Agent } from "undici";
 import db, { markJobsSeen } from "@/lib/db";
 import { abortMatching, beginMatching, recordMatchResults } from "@/lib/pipeline/matching";
 import type { MatchingSession, ScoredJob } from "@/lib/pipeline/matching";
+import { buildMatchPrompt, jobIdOf, selectJobsForScoring } from "@/lib/pipeline/match-scoring";
+import type { MatchJob } from "@/lib/pipeline/match-scoring";
+
+// Jobs arrive as JSON from the UI or the scheduler; their other fields
+// (id, sourceIds, url, …) are passed through to the response untouched.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type IncomingJob = MatchJob & Record<string, any>;
 
 const MATCH_MODEL = "llama3.2:3b";
 // Recorded on each match. Bump when the scoring prompt below changes.
@@ -137,63 +144,10 @@ export async function POST(req: Request) {
     // job descriptions or the model's text (see README: privacy).
     console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length, "| candidate skills:", (candidate.technicalSkills || []).length);
 
-    const roleKeywords = [
-      "software engineer", "software developer", "developer", "engineer",
-      "frontend", "backend", "full stack", "full-stack", "android",
-      "mobile", "graduate", "junior", "web developer",
-    ];
-
-    const skillKeywords = (candidate.technicalSkills || []).map(
-      (skill: string) => skill.toLowerCase()
-    );
-
-    // Seniority is judged from the job TITLE only, on whole words. Matching
-    // substrings across the full description wrongly rejected junior roles
-    // (e.g. "leading", "our staff", "reporting to the engineering manager").
-    const seniorTitlePattern =
-      /\b(senior|lead|principal|staff|architect|manager|director)\b/i;
-
-    // Why a job fails the pre-filter, or null if it passes. A job passes
-    // only with a developer role keyword, a candidate skill, and no senior title.
-    type IncomingJob = { jobId?: unknown; title?: string; description?: string };
-    const filterReasonFor = (job: IncomingJob): string | null => {
-      const text = `${job.title} ${job.description}`.toLowerCase();
-      const hasDeveloperRole = roleKeywords.some(kw => text.includes(kw));
-      const hasRelevantSkill = skillKeywords.some((skill: string) => text.includes(skill));
-      const isSenior = seniorTitlePattern.test(job.title || "");
-      if (!hasDeveloperRole) return "No developer role keyword in the title or description";
-      if (!hasRelevantSkill) return "None of the candidate's skills appear in the title or description";
-      if (isSenior) return "Senior title";
-      return null;
-    };
-
-    const filteredJobs = jobs.filter((job: IncomingJob) => filterReasonFor(job) === null);
-
-    const uniqueFilteredJobs = Array.from(
-      new Map<string, any>(
-        filteredJobs.map((job: any) => [`${job.title}-${job.company}`, job])
-      ).values()
-    );
-
-    const rankedJobs = [...uniqueFilteredJobs].sort((a: any, b: any) => {
-      const scoreJob = (job: any) => {
-        const text = `${job.title} ${job.description}`.toLowerCase();
-        let score = 0;
-        skillKeywords.forEach((skill: string) => {
-          if (text.includes(skill)) score += 10;
-        });
-        if (text.includes("junior")) score += 5;
-        if (text.includes("graduate")) score += 5;
-        return score;
-      };
-      return scoreJob(b) - scoreJob(a);
-    });
-
-    // We want to score enough jobs to eventually support
-// up to 10 applications per day.
-const MAX_JOBS_TO_SCORE = 10;
-
-const selectedJobs = rankedJobs.slice(0, MAX_JOBS_TO_SCORE);
+    // Pre-filter, de-duplicate, rank and pick the top MAX_JOBS_TO_SCORE
+    // (lib/pipeline/match-scoring.ts).
+    const { filteredJobs, uniqueFilteredJobs, rankedJobs, selectedJobs, filteredOut: filteredOutJobs } =
+      selectJobsForScoring<IncomingJob>(jobs, candidate);
 
 console.log("🔎 FILTERED JOB COUNT:", filteredJobs.length);
 console.log("🔎 UNIQUE JOB COUNT:", uniqueFilteredJobs.length);
@@ -206,13 +160,6 @@ console.log("🔎 SELECTED JOB COUNT:", selectedJobs.length);
     // jobs are scored or what this route returns, and a failure to persist
     // is reported, not fatal.
     const persistenceWarnings: string[] = [];
-    const jobIdOf = (job: IncomingJob | null | undefined): number | null =>
-      typeof job?.jobId === "number" ? job.jobId : null;
-    const filteredOutJobs = jobs
-      .map((job: IncomingJob) => ({ jobId: jobIdOf(job), reason: filterReasonFor(job) }))
-      .filter((job: { jobId: number | null; reason: string | null }): job is { jobId: number; reason: string } =>
-        job.jobId !== null && job.reason !== null
-      );
     // Scoring failures by jobNumber (1-based index into selectedJobs).
     const failures = new Map<number, string>();
     try {
@@ -269,45 +216,8 @@ if (selectedJobs.length === 0) {
     // Parallel Ollama calls — one per job
     // -----------------------------------------------
 
-    const callOllama = async (job: any, index: number) => {
-      const jobPrompt = `
-You are a job matcher. Score how well this candidate matches this job.
-
-CANDIDATE SKILLS: ${candidate.technicalSkills.join(", ")}
-CANDIDATE BACKGROUND: ${candidate.summary}
-EXPERIENCE LEVEL: ${candidate.experienceLevel}
-
-JOB: ${job.title} at ${job.company}
-REQUIRES: ${(job.description || "").slice(0, 150)}
-
-Output JSON only. No explanation outside JSON.
-
-{
-  "jobNumber": ${index + 1},
-  "matchScore": 0,
-  "reason": "",
-  "strengths": [],
-  "missingSkills": [{"skill": "Spring Boot", "importance": "medium"}],
-  "breakdown": {
-    "technicalSkills": "<integer 0-100, unique to this job>",
-    "experienceLevel": "<integer 0-100, unique to this job>",
-    "projects": "<integer 0-100, unique to this job>",
-    "growthPotential": "<integer 0-100, unique to this job>"
-  }
-}
-
-Rules:
-- matchScore 0-100 integer
-- strengths must be from candidate skills only
-- missingSkills must NOT include skills the candidate already has
-- reason max 20 words
-- jobNumber must be ${index + 1}
-- Every number in "breakdown" MUST be calculated specifically for THIS job based on the candidate's actual skills versus this job's actual requirements. Do NOT reuse the same numbers across different jobs — a stronger match should score higher, a weaker match should score lower.
-- "technicalSkills" = how many of the candidate's listed skills appear in this job's requirements, as a percentage.
-- "experienceLevel" = how well the candidate's experience level suits this specific job's seniority.
-- "projects" = how relevant the candidate's project background is to this specific job's domain.
-- "growthPotential" = realistic potential for growth in this specific role given the candidate's trajectory.
-`;
+    const callOllama = async (job: IncomingJob, index: number) => {
+      const jobPrompt = buildMatchPrompt(candidate, job, index);
 
       const res = await undiciFetch("http://localhost:11434/api/generate", {
         method: "POST",
