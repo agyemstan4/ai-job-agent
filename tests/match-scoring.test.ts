@@ -11,8 +11,12 @@ import {
   MATCH_NUM_CTX,
   MATCH_NUM_PREDICT,
   MATCH_PROMPT_TOKEN_BUDGET,
+  MATCH_RESPONSE_SCHEMA,
   MAX_JOBS_TO_SCORE,
+  MAX_MISSING_SKILLS,
+  MAX_STRENGTHS,
   MEASURED_WORST_CASE_PROMPT_TOKENS,
+  parseFailureReason,
   parseMatchResponse,
   promptMayBeTruncated,
   SCORING_DESCRIPTION_CHARS,
@@ -420,6 +424,71 @@ describe("3b-4 fix: a 600-token answer limit for match/v2", () => {
   });
 });
 
+describe("3b-4b: bounded match answers (match/v3)", () => {
+  const schema = MATCH_RESPONSE_SCHEMA;
+  const route = fs.readFileSync(path.join(import.meta.dirname, "..", "app/api/match/route.ts"), "utf8");
+
+  test("the schema has the prompt's fields, in the prompt's order, all required", () => {
+    // The answer template in the (unchanged) prompt is valid JSON: read its keys.
+    const prompt = buildMatchPrompt(candidate, { title: "T", company: "C" }, 0, "d");
+    const template = JSON.parse(prompt.slice(prompt.indexOf("{"), prompt.indexOf("\n}\n") + 2));
+    assert.deepEqual(Object.keys(schema.properties), Object.keys(template));
+    assert.deepEqual([...schema.required], Object.keys(template));
+    assert.deepEqual(Object.keys(schema.properties.breakdown.properties), Object.keys(template.breakdown));
+    assert.deepEqual([...schema.properties.breakdown.required], Object.keys(template.breakdown));
+    assert.deepEqual(Object.keys(schema.properties.missingSkills.items.properties), Object.keys(template.missingSkills[0]));
+  });
+
+  test("both lists are capped at 10", () => {
+    assert.equal(MAX_MISSING_SKILLS, 10);
+    assert.equal(MAX_STRENGTHS, 10);
+    assert.equal(schema.properties.missingSkills.maxItems, MAX_MISSING_SKILLS);
+    assert.equal(schema.properties.strengths.maxItems, MAX_STRENGTHS);
+  });
+
+  test("types: integer scores, string text, importance high/medium/low", () => {
+    assert.equal(schema.type, "object");
+    assert.equal(schema.properties.jobNumber.type, "integer");
+    assert.equal(schema.properties.matchScore.type, "integer");
+    assert.equal(schema.properties.reason.type, "string");
+    assert.equal(schema.properties.strengths.items.type, "string");
+    assert.deepEqual([...schema.properties.missingSkills.items.properties.importance.enum], ["high", "medium", "low"]);
+    for (const field of Object.values(schema.properties.breakdown.properties)) assert.equal(field.type, "integer");
+  });
+
+  test("no text length limits or score ranges (they emptied the reason in testing; the route clamps scores)", () => {
+    const text = JSON.stringify(schema);
+    for (const keyword of ["maxLength", "minLength", "minimum", "maximum", "pattern"]) {
+      assert.equal(text.includes(keyword), false, keyword);
+    }
+  });
+
+  test("an answer in the schema's shape parses", () => {
+    const answer = {
+      jobNumber: 3,
+      matchScore: 72,
+      reason: "Good Java and Kotlin match for a graduate role",
+      strengths: ["Java", "Kotlin"],
+      missingSkills: Array.from({ length: MAX_MISSING_SKILLS }, (_, i) => ({ skill: `Skill ${i}`, importance: "low" })),
+      breakdown: { technicalSkills: 70, experienceLevel: 80, projects: 65, growthPotential: 75 },
+    };
+    assert.deepEqual(parseMatchResponse(JSON.stringify(answer)), answer);
+  });
+
+  test("a failed parse records whether the answer was cut off or invalid", () => {
+    assert.equal(parseFailureReason("length"), "The model's answer was cut off at the 600-token limit");
+    assert.equal(parseFailureReason("stop"), "The model's response was not valid JSON");
+    assert.equal(parseFailureReason(undefined), "The model's response was not valid JSON");
+  });
+
+  test("the route sends the schema, records the failure reason and caps missing skills", () => {
+    assert.match(route, /format: MATCH_RESPONSE_SCHEMA,/);
+    assert.equal(route.includes('format: "json"'), false);
+    assert.match(route, /failures\.set\(index \+ 1, parseFailureReason\(data\.done_reason\)\);/);
+    assert.match(route, /\? result\.missingSkills\s*(\/\/[^\n]*\s*)?\.slice\(0, MAX_MISSING_SKILLS\)\s*\.map\(/);
+  });
+});
+
 describe("3b-3: the prompt fits the model's context", () => {
   test("truncation is flagged at the budget or by too many characters per token", () => {
     // Measured with llama3.2:3b: normal prompts, and an uncapped prompt Ollama cut.
@@ -470,7 +539,7 @@ describe("3b-1: /api/match uses the extracted pipeline", () => {
     }
   });
 
-  test("the prompt version is match/v2", () => {
-    assert.match(source, /const MATCH_PROMPT_VERSION = "match\/v2";/);
+  test("the prompt version is match/v3", () => {
+    assert.match(source, /const MATCH_PROMPT_VERSION = "match\/v3";/);
   });
 });

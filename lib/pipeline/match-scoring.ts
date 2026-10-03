@@ -77,6 +77,60 @@ export function parseMatchResponse(text: string): unknown {
   return JSON.parse(text.replace(/```json/g, "").replace(/```/g, "").trim());
 }
 
+// List caps for a scoring answer (match/v3). 10 is the largest number of
+// missing skills seen in a successful answer; strengths are cut to 2 later.
+export const MAX_MISSING_SKILLS = 10;
+export const MAX_STRENGTHS = 10;
+
+/**
+ * The JSON schema Ollama constrains each scoring answer to (match/v3, sent as
+ * `format`). With plain `format: "json"` some prompts made the model list
+ * missing skills in an endless loop until the token limit, leaving invalid
+ * JSON; maxItems makes it close the lists and go on to the breakdown.
+ * Same fields and order as the prompt. No maxLength on text: in testing it
+ * made the model return an empty reason. Scores are clamped by the route.
+ * Needs Ollama 0.5 or later.
+ */
+export const MATCH_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    jobNumber: { type: "integer" },
+    matchScore: { type: "integer" },
+    reason: { type: "string" },
+    strengths: { type: "array", items: { type: "string" }, maxItems: MAX_STRENGTHS },
+    missingSkills: {
+      type: "array",
+      maxItems: MAX_MISSING_SKILLS,
+      items: {
+        type: "object",
+        properties: {
+          skill: { type: "string" },
+          importance: { type: "string", enum: ["high", "medium", "low"] },
+        },
+        required: ["skill", "importance"],
+      },
+    },
+    breakdown: {
+      type: "object",
+      properties: {
+        technicalSkills: { type: "integer" },
+        experienceLevel: { type: "integer" },
+        projects: { type: "integer" },
+        growthPotential: { type: "integer" },
+      },
+      required: ["technicalSkills", "experienceLevel", "projects", "growthPotential"],
+    },
+  },
+  required: ["jobNumber", "matchScore", "reason", "strengths", "missingSkills", "breakdown"],
+} as const;
+
+/** The error recorded for an answer that did not parse, from Ollama's done_reason. */
+export function parseFailureReason(doneReason: string | undefined): string {
+  return doneReason === "length"
+    ? `The model's answer was cut off at the ${MATCH_NUM_PREDICT}-token limit`
+    : "The model's response was not valid JSON";
+}
+
 /**
  * The first maxChars characters of a description, cut back to the last
  * space or line break (if one is in the second half) and ended with "…".

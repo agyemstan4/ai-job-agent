@@ -9,6 +9,9 @@ import {
   MATCH_NUM_CTX,
   MATCH_NUM_PREDICT,
   MATCH_PROMPT_TOKEN_BUDGET,
+  MATCH_RESPONSE_SCHEMA,
+  MAX_MISSING_SKILLS,
+  parseFailureReason,
   parseMatchResponse,
   promptMayBeTruncated,
   selectJobsForScoring,
@@ -24,10 +27,12 @@ import { describeError } from "@/lib/log-safety";
 type IncomingJob = MatchJob & Record<string, any>;
 
 const MATCH_MODEL = "llama3.2:3b";
-// Recorded on each match. Bump when the scoring prompt changes.
+// Recorded on each match. Bump when the scoring prompt or answer format changes.
 // v2 (checkpoint 3b-3): scores against the job's best stored description,
 // up to SCORING_DESCRIPTION_CHARS, instead of 150 characters of the snippet.
-const MATCH_PROMPT_VERSION = "match/v2";
+// v3 (checkpoint 3b-4b): same prompt text, but answers are constrained to
+// MATCH_RESPONSE_SCHEMA (capped lists) instead of free-form JSON.
+const MATCH_PROMPT_VERSION = "match/v3";
 
 // Ollama only replies once generation has finished, and the scoring calls
 // queue behind each other on CPU, so a call can wait longer than the
@@ -263,7 +268,9 @@ if (selectedJobs.length === 0) {
           model: MATCH_MODEL,
           prompt: jobPrompt,
           stream: false,
-          format: "json",
+          // A JSON schema, not just "json": it caps the lists so the model
+          // cannot loop on missingSkills until the token limit (match/v3).
+          format: MATCH_RESPONSE_SCHEMA,
           options: {
             temperature: 0,
             num_predict: MATCH_NUM_PREDICT,
@@ -276,7 +283,12 @@ if (selectedJobs.length === 0) {
         throw new Error(`Ollama error: ${res.status}`);
       }
 
-      const data = (await res.json()) as { response: string; eval_count?: number; prompt_eval_count?: number };
+      const data = (await res.json()) as {
+        response: string;
+        eval_count?: number;
+        prompt_eval_count?: number;
+        done_reason?: string;
+      };
       // A prompt that did not fit is cut from the start by Ollama.
       if (promptMayBeTruncated(jobPrompt.length, data.prompt_eval_count)) {
         console.warn(`⚠️ Job ${index + 1} prompt may have been truncated: ${jobPrompt.length} characters, ${data.prompt_eval_count} tokens (budget ${MATCH_PROMPT_TOKEN_BUDGET})`);
@@ -287,8 +299,8 @@ if (selectedJobs.length === 0) {
         console.log(`✅ Job ${index + 1} scored (${data.eval_count ?? "?"} tokens, prompt ${data.prompt_eval_count ?? "?"} tokens)`);
         return { ...parsed, jobNumber: index + 1 };
       } catch {
-        console.error(`❌ Job ${index + 1} failed to parse`);
-        failures.set(index + 1, "The model's response was not valid JSON");
+        console.error(`❌ Job ${index + 1} failed to parse (done_reason: ${data.done_reason ?? "unknown"}, ${data.eval_count ?? "?"} tokens)`);
+        failures.set(index + 1, parseFailureReason(data.done_reason));
         return null;
       }
     };
@@ -456,6 +468,8 @@ const finalMatchScore = modelScore === null
             : [],
           missingSkills: Array.isArray(result.missingSkills)
             ? result.missingSkills
+                // The schema already caps the list; kept in case Ollama ignores it.
+                .slice(0, MAX_MISSING_SKILLS)
                 .map((item: any) =>
                   typeof item === "string" ? { skill: item, importance: "medium" } : item
                 )

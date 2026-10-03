@@ -400,9 +400,9 @@ describe("3b-2: /api/match fetches details only for selected jobs of saved runs"
     assert.match(route, /\} catch \(error\) \{\s*console\.error\("Reed details skipped:", describeError\(error\)\);/);
   });
 
-  test("the prompt scores against the stored description (match/v2)", () => {
+  test("the prompt scores against the stored description (since match/v2; now match/v3)", () => {
     assert.match(route, /const jobPrompt = buildMatchPrompt\(candidate, job, index, scoringDescriptionFor\(db, job\)\);/);
-    assert.match(route, /const MATCH_PROMPT_VERSION = "match\/v2";/);
+    assert.match(route, /const MATCH_PROMPT_VERSION = "match\/v3";/);
     // Enrichment happens before any prompt is built.
     assert.ok(route.indexOf("await enrichSelectedJobs(") < route.indexOf("scoringDescriptionFor(db, job)"));
   });

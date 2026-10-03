@@ -78,7 +78,7 @@ approve or submit on the user's behalf.
 Requirements:
 
 1. **Node.js** (the project is developed on Node 24).
-2. **Ollama** with the model pulled: `ollama pull llama3.2:3b`, and running (`ollama serve`).
+2. **Ollama** 0.5 or later (structured outputs) with the model pulled: `ollama pull llama3.2:3b`, and running (`ollama serve`).
 3. **LibreOffice** installed at `C:\Program Files\LibreOffice` (otherwise CVs are delivered as DOCX).
 4. API keys for Adzuna (required) and Reed (optional), in `.env.local`.
 
@@ -142,7 +142,9 @@ once from Reed's job details API (runs started from the UI only) and stored;
 if the request fails, the search snippet is used. The model scores each job
 against its best stored description (the full text, else the longest
 snippet), up to 2,000 characters; the pre-filter and ranking use the search
-snippet. Matches record the prompt version (`match/v2`).
+snippet. Answers are constrained to a JSON schema (at most 10 missing skills
+and 10 strengths) so the model cannot loop until its token limit. Matches
+record the prompt version (`match/v3`).
 
 ### CV and application preparation
 For each selected job the page calls `/api/tailor-cv`, `/api/generate-cv-docx`
