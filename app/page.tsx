@@ -459,9 +459,14 @@ if (combinedData.structuredCV) {
 
         <div className="flex items-center justify-between">
           <h1 className="text-4xl font-bold text-gray-900">AI Job Agent</h1>
-          <a href="/review" className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700">
-            📋 Review Queue
-          </a>
+          <div className="flex gap-2">
+            <a href="/review" className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700">
+              📋 Review Queue
+            </a>
+            <a href="/applications" className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
+              🗂 Applications
+            </a>
+          </div>
         </div>
         <p className="mt-2 text-gray-600">
           Upload your CV and let AI analyse it for suitable software jobs.
