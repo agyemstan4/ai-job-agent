@@ -9,6 +9,7 @@ import {
   MATCH_NUM_CTX,
   MATCH_NUM_PREDICT,
   MATCH_PROMPT_TOKEN_BUDGET,
+  parseMatchResponse,
   promptMayBeTruncated,
   selectJobsForScoring,
 } from "@/lib/pipeline/match-scoring";
@@ -282,9 +283,7 @@ if (selectedJobs.length === 0) {
       }
 
       try {
-        const parsed = JSON.parse(
-          data.response.replace(/```json/g, "").replace(/```/g, "").trim()
-        );
+        const parsed = parseMatchResponse(data.response) as Record<string, unknown>;
         console.log(`✅ Job ${index + 1} scored (${data.eval_count ?? "?"} tokens, prompt ${data.prompt_eval_count ?? "?"} tokens)`);
         return { ...parsed, jobNumber: index + 1 };
       } catch {

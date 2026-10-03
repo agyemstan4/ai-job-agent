@@ -12,6 +12,8 @@ import {
   MATCH_NUM_PREDICT,
   MATCH_PROMPT_TOKEN_BUDGET,
   MAX_JOBS_TO_SCORE,
+  MEASURED_WORST_CASE_PROMPT_TOKENS,
+  parseMatchResponse,
   promptMayBeTruncated,
   SCORING_DESCRIPTION_CHARS,
   selectJobsForScoring,
@@ -364,25 +366,75 @@ describe("3b-3: boundDescription", () => {
   });
 });
 
-describe("3b-3: the prompt fits the model's context", () => {
-  test("Ollama settings are unchanged and the budget is the context minus the answer", () => {
+describe("3b-4 fix: a 600-token answer limit for match/v2", () => {
+  test("the shared answer limit is 600; the context window is unchanged", () => {
+    assert.equal(MATCH_NUM_PREDICT, 600);
     assert.equal(MATCH_NUM_CTX, 2048);
-    assert.equal(MATCH_NUM_PREDICT, 400);
-    assert.equal(MATCH_PROMPT_TOKEN_BUDGET, 1648);
+    assert.equal(MATCH_PROMPT_TOKEN_BUDGET, 2048 - 600);
   });
 
+  test("the measured worst-case prompt plus the answer fits the 2,048-token context", () => {
+    assert.equal(MEASURED_WORST_CASE_PROMPT_TOKENS, 1139);
+    assert.ok(MEASURED_WORST_CASE_PROMPT_TOKENS + MATCH_NUM_PREDICT <= MATCH_NUM_CTX);
+    assert.ok(MEASURED_WORST_CASE_PROMPT_TOKENS < MATCH_PROMPT_TOKEN_BUDGET);
+    // The largest real prompt in the 3b-4 run (971 tokens) with a full 600-token answer.
+    assert.ok(971 + 600 <= MATCH_NUM_CTX);
+    // The worst case is not flagged as truncated.
+    assert.equal(promptMayBeTruncated(4992, MEASURED_WORST_CASE_PROMPT_TOKENS), false);
+  });
+
+  // A match/v2 answer as long as the ones that were cut off at 400 tokens:
+  // seven missing skills, a full breakdown (~1,400 characters).
+  const longAnswer = JSON.stringify({
+    jobNumber: 5,
+    matchScore: 74,
+    reason: "Strong Java and Kotlin match; lacks commercial cloud and streaming experience required here",
+    strengths: ["Java", "Kotlin"],
+    missingSkills: ["Spring Boot", "Kubernetes", "Kafka", "AWS", "Terraform", "GraphQL", "Redis"].map((skill, i) => ({
+      skill,
+      importance: ["high", "medium", "low"][i % 3],
+    })),
+    breakdown: { technicalSkills: 72, experienceLevel: 65, projects: 70, growthPotential: 80 },
+  }, null, 2);
+
+  test("a long match/v2 answer parses, with or without ``` fences", () => {
+    assert.ok(longAnswer.length > 600);
+    const parsed = parseMatchResponse(longAnswer) as { missingSkills: unknown[]; matchScore: number };
+    assert.equal(parsed.matchScore, 74);
+    assert.equal(parsed.missingSkills.length, 7);
+    assert.deepEqual(parseMatchResponse("```json\n" + longAnswer + "\n```"), parsed);
+    assert.deepEqual(parseMatchResponse(`  ${longAnswer}\n`), parsed);
+  });
+
+  test("an answer cut off mid-way still throws (recorded as a failed match, as before)", () => {
+    assert.throws(() => parseMatchResponse(longAnswer.slice(0, Math.floor(longAnswer.length * 0.7))), SyntaxError);
+    assert.throws(() => parseMatchResponse(""), SyntaxError);
+  });
+
+  test("the route parses with parseMatchResponse and sends num_predict MATCH_NUM_PREDICT", () => {
+    const route = fs.readFileSync(path.join(import.meta.dirname, "..", "app/api/match/route.ts"), "utf8");
+    assert.match(route, /const parsed = parseMatchResponse\(data\.response\) as Record<string, unknown>;/);
+    assert.equal(route.includes("JSON.parse("), false);
+    assert.match(route, /num_predict: MATCH_NUM_PREDICT,/);
+    assert.equal(/num_predict: \d/.test(route), false);
+  });
+});
+
+describe("3b-3: the prompt fits the model's context", () => {
   test("truncation is flagged at the budget or by too many characters per token", () => {
     // Measured with llama3.2:3b: normal prompts, and an uncapped prompt Ollama cut.
     assert.equal(promptMayBeTruncated(2504, 590), false);
     assert.equal(promptMayBeTruncated(4352, 979), false);
     assert.equal(promptMayBeTruncated(4992, 1139), false);
     assert.equal(promptMayBeTruncated(12802, 1026), true);
-    assert.equal(promptMayBeTruncated(7000, 1648), true);
+    assert.equal(promptMayBeTruncated(7000, MATCH_PROMPT_TOKEN_BUDGET), true);
     assert.equal(promptMayBeTruncated(4000, undefined), false);
     assert.equal(promptMayBeTruncated(4000, 0), false);
   });
 
-  test("a long CV with a full description stays under the budget (≥ 3.5 characters per token)", () => {
+  // Every real prompt measured so far tokenised at 4.24–4.88 characters per
+  // token (synthetic and the 3b-4 run); 4.0 is a conservative floor.
+  test("a long CV with a full description stays under the budget (≥ 4.0 characters per token)", () => {
     // Larger than the live profile (22 skills, 665-character summary).
     const bigCandidate: MatchCandidate = {
       technicalSkills: Array.from({ length: 30 }, (_, i) => `Skill number ${i}`),
@@ -395,7 +447,7 @@ describe("3b-3: the prompt fits the model's context", () => {
       9,
       FULL_REED
     );
-    assert.ok(prompt.length / 3.5 < MATCH_PROMPT_TOKEN_BUDGET, `${prompt.length} characters`);
+    assert.ok(prompt.length / 4.0 < MATCH_PROMPT_TOKEN_BUDGET, `${prompt.length} characters`);
   });
 });
 

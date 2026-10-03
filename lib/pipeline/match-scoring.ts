@@ -37,8 +37,13 @@ export const MAX_JOBS_TO_SCORE = 10;
 // a longer prompt is cut from the START by Ollama, silently losing the
 // instructions and the candidate.
 export const MATCH_NUM_CTX = 2048;
-export const MATCH_NUM_PREDICT = 400;
+// The answer's token limit. 400 until checkpoint 3b-4: with full Reed
+// descriptions (match/v2) the model writes longer answers (more missing
+// skills), and ~20% of them were cut off at 400 tokens, leaving invalid JSON.
+export const MATCH_NUM_PREDICT = 600;
 export const MATCH_PROMPT_TOKEN_BUDGET = MATCH_NUM_CTX - MATCH_NUM_PREDICT;
+/** The largest scoring prompt measured with llama3.2:3b (see SCORING_DESCRIPTION_CHARS). */
+export const MEASURED_WORST_CASE_PROMPT_TOKENS = 1139;
 
 /**
  * How much of the job description the scoring prompt includes (match/v2;
@@ -47,7 +52,8 @@ export const MATCH_PROMPT_TOKEN_BUDGET = MATCH_NUM_CTX - MATCH_NUM_PREDICT;
  * llama3.2:3b on synthetic prompts (4.2–4.45 characters per token): a
  * v1-sized prompt is ~590 tokens, a snippet ~660, a 2,000-character
  * description with a typical CV ~980, and with a larger CV (30 skills,
- * 1,000-character summary) ~1,140 — still 500 below the budget.
+ * 1,000-character summary) ~1,140 — ~300 below the 1,448-token budget.
+ * Real match/v2 prompts in the 3b-4 acceptance run were 652–971 tokens.
  */
 export const SCORING_DESCRIPTION_CHARS = 2000;
 
@@ -60,6 +66,15 @@ export const SCORING_DESCRIPTION_CHARS = 2000;
 export function promptMayBeTruncated(promptChars: number, promptTokens: number | undefined): boolean {
   if (!promptTokens) return false;
   return promptTokens >= MATCH_PROMPT_TOKEN_BUDGET || promptChars > promptTokens * 6;
+}
+
+/**
+ * The model's JSON answer, with any ``` fences removed. Throws if it is not
+ * valid JSON (e.g. cut off at MATCH_NUM_PREDICT tokens). Moved unchanged
+ * from the route so it can be tested.
+ */
+export function parseMatchResponse(text: string): unknown {
+  return JSON.parse(text.replace(/```json/g, "").replace(/```/g, "").trim());
 }
 
 /**
