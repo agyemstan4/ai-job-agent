@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { fetch as undiciFetch, Agent } from "undici";
 import db, { markJobsSeen } from "@/lib/db";
 import { abortMatching, beginMatching, recordMatchResults } from "@/lib/pipeline/matching";
 import type { MatchingSession, ScoredJob } from "@/lib/pipeline/matching";
@@ -6,6 +7,14 @@ import type { MatchingSession, ScoredJob } from "@/lib/pipeline/matching";
 const MATCH_MODEL = "llama3.2:3b";
 // Recorded on each match. Bump when the scoring prompt below changes.
 const MATCH_PROMPT_VERSION = "match/v1";
+
+// Ollama only replies once generation has finished, and the scoring calls
+// queue behind each other on CPU, so a call can wait longer than the
+// 5-minute default headers timeout of the built-in fetch.
+const longTimeoutAgent = new Agent({
+  headersTimeout: 1_200_000,
+  bodyTimeout: 1_200_000,
+});
 
 // Returns a 0-100 integer, or null if the model gave no usable number.
 function parseScore(value: unknown): number | null {
@@ -29,7 +38,7 @@ function validateStrengths(strengths: string[], candidate: any) {
   const candidateSkills = (candidate.technicalSkills || [])
     .map((skill: string) => skill.toLowerCase());
 
-  // candidate.projects no longer exists in the trimmed analyse-cv schema —
+  // candidate.projects is not part of the CV analysis (analyse-and-extract) —
   // technicalSkills and matchingSkills already cover the same ground.
   const allCandidateSkills = [
     ...candidateSkills,
@@ -68,9 +77,6 @@ function validateStrengths(strengths: string[], candidate: any) {
 function validateReason(reason: string, candidate: any) {
   const candidateText = JSON.stringify(candidate).toLowerCase();
   const lowerReason = reason.toLowerCase();
-
-  console.log("REASON CHECK:", lowerReason);
-  console.log("CANDIDATE CHECK:", candidateText);
 
   const forbidden = [
     "python", "fastapi", "postgresql", "react", "react native",
@@ -127,22 +133,9 @@ export async function POST(req: Request) {
   try {
     const { candidate, jobs, candidateProfileId } = await req.json();
 
-console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length);
-
-console.log(
-  "🔍 CANDIDATE SKILLS:",
-  candidate.technicalSkills
-);
-
-console.log(
-  "🔍 FIRST 3 JOBS:",
-  jobs.slice(0, 3).map((job: any) => ({
-    title: job.title,
-    company: job.company,
-    description: job.description?.slice(0, 300),
-  }))
-);
-
+    // Logs carry counts, scores and timings only — never the candidate profile,
+    // job descriptions or the model's text (see README: privacy).
+    console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length, "| candidate skills:", (candidate.technicalSkills || []).length);
 
     const roleKeywords = [
       "software engineer", "software developer", "developer", "engineer",
@@ -159,16 +152,6 @@ console.log(
     // (e.g. "leading", "our staff", "reporting to the engineering manager").
     const seniorTitlePattern =
       /\b(senior|lead|principal|staff|architect|manager|director)\b/i;
-
-console.log("🔍 TOTAL JOBS RECEIVED:", jobs.length);
-console.log(
-  "🔍 FIRST 3 JOBS:",
-  jobs.slice(0, 3).map((job: any) => ({
-    title: job.title,
-    company: job.company,
-    description: job.description?.slice(0, 300),
-  }))
-);
 
     // Why a job fails the pre-filter, or null if it passes. A job passes
     // only with a developer role keyword, a candidate skill, and no senior title.
@@ -280,7 +263,7 @@ if (selectedJobs.length === 0) {
   return NextResponse.json(withWarnings({ matches: [] }));
 }
 
-    console.log("Filtered jobs:", selectedJobs.map((job: any) => job.title));
+    console.log("Selected for scoring:", selectedJobs.length, "job(s)");
 
     // -----------------------------------------------
     // Parallel Ollama calls — one per job
@@ -326,9 +309,10 @@ Rules:
 - "growthPotential" = realistic potential for growth in this specific role given the candidate's trajectory.
 `;
 
-      const res = await fetch("http://localhost:11434/api/generate", {
+      const res = await undiciFetch("http://localhost:11434/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        dispatcher: longTimeoutAgent,
         body: JSON.stringify({
           model: MATCH_MODEL,
           prompt: jobPrompt,
@@ -346,14 +330,13 @@ Rules:
         throw new Error(`Ollama error: ${res.status}`);
       }
 
-      const data = await res.json();
+      const data = (await res.json()) as { response: string; eval_count?: number };
 
       try {
         const parsed = JSON.parse(
           data.response.replace(/```json/g, "").replace(/```/g, "").trim()
         );
-        console.log(`✅ Job ${index + 1} (${job.title}) done`);
-        console.log(`RAW:`, data.response);
+        console.log(`✅ Job ${index + 1} scored (${data.eval_count ?? "?"} tokens)`);
         return { ...parsed, jobNumber: index + 1 };
       } catch {
         console.error(`❌ Job ${index + 1} failed to parse`);
@@ -409,8 +392,6 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
 
     const scoredJobs = rawResults.filter(Boolean);
 
-    console.log("AI RETURN:", scoredJobs);
-    console.log("AI RETURN TYPE:", typeof scoredJobs);
 
     if (scoredJobs.length === 0) {
       // Nothing was scored, so nothing is marked as seen — these jobs remain
@@ -458,7 +439,7 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
         }
 
         // "Multiple projects" signal used to come from candidate.projects.length,
-        // which no longer exists in the trimmed analyse-cv schema. technicalSkills
+        // which is not part of the CV analysis (analyse-and-extract). technicalSkills
         // breadth is a reasonable proxy for "has built several real things".
         if ((candidate.technicalSkills || []).length >= 8) {
           cleanBreakdown.projects = Math.max(cleanBreakdown.projects, 70);
@@ -476,7 +457,7 @@ for (let i = 0; i < selectedJobs.length; i += BATCH_SIZE) {
           .some((key) => parseScore(result.breakdown?.[key]) !== null);
 
         if (modelScore === null && !hasBreakdown) {
-          console.warn(`⚠️ Job ${result.jobNumber} (${job.title}) returned no usable score — skipped`);
+          console.warn(`⚠️ Job ${result.jobNumber} returned no usable score — skipped`);
           failures.set(result.jobNumber, "The model returned no usable score");
           return null;
         }
@@ -595,7 +576,7 @@ const finalMatchScore = modelScore === null
     }));
 
     console.log("Finished scoring jobs.");
-    console.log("FINAL MATCHES:", JSON.stringify(responseMatches, null, 2));
+    console.log("Final matches:", responseMatches.length, "| scores:", responseMatches.map((m) => m.matchScore).join(", ") || "none");
     console.log(`🏁 MATCH API TOTAL: ${((Date.now() - totalStart) / 1000).toFixed(2)}s`);
 
     return NextResponse.json(withWarnings({ matches: responseMatches }));

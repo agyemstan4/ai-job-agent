@@ -270,8 +270,12 @@ const response = (await ollamaResponse.json()) as {
     try {
       parsed = parseOllamaJson(response, NUM_PREDICT);
     } catch (error) {
-      console.error("JSON PARSE FAILED");
-      console.error(response.response);
+      // The model output contains CV content: log only its shape, never the text.
+      console.error("JSON PARSE FAILED:", {
+        outputChars: response.response?.length ?? 0,
+        doneReason: response.done_reason ?? "unknown",
+        generatedTokens: response.eval_count ?? "N/A",
+      });
       throw error;
     }
 
@@ -322,7 +326,7 @@ const response = (await ollamaResponse.json()) as {
 
     console.log("Combined result ready:", {
       analysisScore: analysis.matchScore,
-      structuredCVName: structuredCV.name,
+      experienceCount: Array.isArray(structuredCV.experience) ? structuredCV.experience.length : 0,
       projectCount: projects.length,
     });
 

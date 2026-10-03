@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
 import { coverLetterEmail, sendEmailCopy } from "@/lib/email-copies";
+import { COVER_LETTER_PROMPT_VERSION, GENERATION_MODEL } from "@/lib/generation/versions";
 
 const longTimeoutAgent = new Agent({
   headersTimeout: 600000,
@@ -39,7 +40,7 @@ NEVER start with "I am writing to" or "I would like to apply". Start with someth
       headers: { "Content-Type": "application/json" },
       dispatcher: longTimeoutAgent,
       body: JSON.stringify({
-       model: "llama3.2:3b",
+       model: GENERATION_MODEL,
         prompt,
         stream: false,
         options: {
@@ -63,6 +64,8 @@ NEVER start with "I am writing to" or "I would like to apply". Start with someth
         { status: 500 }
       );
     }
+
+    console.log("cover-letter done:", { model: GENERATION_MODEL, promptVersion: COVER_LETTER_PROMPT_VERSION, chars: coverLetter.length });
 
     // Email copy, only if enabled (EMAIL_COPIES_ENABLED); in the background —
     // it never blocks or fails the response.

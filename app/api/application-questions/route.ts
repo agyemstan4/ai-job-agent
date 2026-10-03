@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
+import { APPLICATION_QUESTIONS_PROMPT_VERSION, GENERATION_MODEL } from "@/lib/generation/versions";
 
 const longTimeoutAgent = new Agent({
   headersTimeout: 600000,
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
           .join("; ")
       : "";
 
-    // The real field from extract-cv-structured is "experience", not
+    // The real field in the structured CV is "experience", not
     // "workExperience", and its objects use title/company/dates/bullets —
     // not role/company/duration. This mapping never matched the actual
     // data shape, so Experience has always rendered blank here.
@@ -98,7 +99,7 @@ const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", 
       headers: { "Content-Type": "application/json" },
       dispatcher: longTimeoutAgent,
       body: JSON.stringify({
-        model: "llama3.2:3b",
+        model: GENERATION_MODEL,
         prompt,
         stream: false,
         format: "json",
@@ -135,18 +136,23 @@ const ollamaResponse = await undiciFetch("http://localhost:11434/api/generate", 
         const firstArray = Object.values(parsed).find((v) => Array.isArray(v));
         answers = firstArray || [];
       }
-    } catch (error) {
-      console.error("JSON PARSE FAILED");
-      console.error(response.response);
+    } catch {
+      // The model output contains application answers: log only its size.
+      console.error("JSON PARSE FAILED:", { outputChars: response.response?.length ?? 0 });
       throw new Error("Ollama returned invalid JSON");
     }
 
     if (answers.length === 0) {
-      console.error("NO ANSWERS IN MODEL OUTPUT");
-      console.error(response.response);
+      console.error("NO ANSWERS IN MODEL OUTPUT:", { outputChars: response.response?.length ?? 0 });
       throw new Error("The AI model returned no answers. Please try again.");
     }
 
+    console.log("application-questions done:", {
+      model: GENERATION_MODEL,
+      promptVersion: APPLICATION_QUESTIONS_PROMPT_VERSION,
+      questionCount: questions.length,
+      answerCount: answers.length,
+    });
     return NextResponse.json({ success: true, answers });
   } catch (error) {
     console.error("FULL ERROR:");

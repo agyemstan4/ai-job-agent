@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import db, { filterNewJobs } from "@/lib/db";
 import { recordDiscovery } from "@/lib/pipeline/discovery";
 import type { DiscoveredListing } from "@/lib/pipeline/discovery";
+import { describeError } from "@/lib/log-safety";
 
 export async function POST(req: Request) {
   try {
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
       const fetches = searchTerms.map(async (term) => {
         const url = `https://api.adzuna.com/v1/api/jobs/gb/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=20&what=${encodeURIComponent(term)}&where=${encodeURIComponent(location)}`;
         const response = await fetch(url).catch((error) => {
-          console.log("Adzuna request error:", term, error);
+          console.log("Adzuna request error:", term, describeError(error));
           return null;
         });
         if (!response || !response.ok) {
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
             Authorization: `Basic ${Buffer.from(reedKey + ":").toString("base64")}`,
           },
         }).catch((error) => {
-          console.log("Reed request error:", term, error);
+          console.log("Reed request error:", term, describeError(error));
           return null;
         });
         if (!response || !response.ok) {
@@ -189,7 +190,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json(newJobs);
   } catch (error) {
-    console.error(error);
+    console.error("POST /api/jobs error:", describeError(error));
     return NextResponse.json(
       { error: "Failed to fetch jobs" },
       { status: 500 }

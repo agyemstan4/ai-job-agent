@@ -3,6 +3,7 @@ import { mimeTypeForFilename } from "../repositories/shared.ts";
 import { getProfile } from "../repositories/candidates.ts";
 import { getJob, recordJobListing } from "../repositories/jobs.ts";
 import { getMatch } from "../repositories/matches.ts";
+import { GENERATION_MODEL } from "../generation/versions.ts";
 import {
   addApplicationAsset,
   createApplication,
@@ -50,7 +51,7 @@ export type SavedBatchResult = {
   warning: string | null;
 };
 
-const ASSET_MODEL = "llama3.2:3b";
+const ASSET_MODEL = GENERATION_MODEL;
 
 const str = (value: unknown): string | null =>
   typeof value === "string" && value.trim() ? value : null;

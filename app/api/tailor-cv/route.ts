@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetch as undiciFetch, Agent } from "undici";
 import { parseOllamaJson } from "@/lib/ollama-json";
+import { GENERATION_MODEL, TAILOR_CV_PROMPT_VERSION } from "@/lib/generation/versions";
 
 const NUM_PREDICT = 1800;
 const NUM_CTX = 6144;
@@ -92,7 +93,7 @@ ${degreeRule}
       headers: { "Content-Type": "application/json" },
       dispatcher: longTimeoutAgent,
       body: JSON.stringify({
-        model: "llama3.2:3b",
+        model: GENERATION_MODEL,
         prompt,
         stream: false,
         format: "json",
@@ -113,14 +114,18 @@ ${degreeRule}
       done_reason?: string;
       eval_count?: number;
     };
-    console.log("tailor-cv generated tokens:", response.eval_count ?? "N/A");
+    console.log("tailor-cv done:", { model: GENERATION_MODEL, promptVersion: TAILOR_CV_PROMPT_VERSION, generatedTokens: response.eval_count ?? "N/A" });
 
     let tailoredCV;
     try {
       tailoredCV = parseOllamaJson(response, NUM_PREDICT) as Record<string, unknown> & { skills?: unknown };
     } catch (error) {
-      console.error("JSON PARSE FAILED");
-      console.error(response.response);
+      // The model output contains CV content: log only its shape, never the text.
+      console.error("JSON PARSE FAILED:", {
+        outputChars: response.response?.length ?? 0,
+        doneReason: response.done_reason ?? "unknown",
+        generatedTokens: response.eval_count ?? "N/A",
+      });
       throw error;
     }
 
