@@ -56,23 +56,23 @@ describe("approval gate — repository API", () => {
     const approval = listApplicationEvents(t.db, app.id).find((e) => e.toStatus === "approved")!;
     assert.equal(approval.actor, "user");
 
-    assert.equal(beginSubmission(t.db, app.id, { method: "manual" }).status, "submitting");
-    const done = recordSubmissionResult(t.db, app.id, { success: true, reference: "REF-1" });
+    assert.equal(beginSubmission(t.db, app.id, { method: "manual", actor: "user" }).status, "submitting");
+    const done = recordSubmissionResult(t.db, app.id, { success: true, reference: "REF-1" }, "user");
     assert.equal(done.status, "submitted");
     assert.equal(done.submissionReference, "REF-1");
   });
 
   test("cannot begin submission for any unapproved status", () => {
     const app = readyApplication();
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "api" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "api", actor: "user" }), { code: "APPROVAL_REQUIRED" });
 
     const preparing = createApplication(t.db, {
       jobId: recordJobListing(t.db, { sourceId: "reed", externalId: "p", title: "QA", company: "Other" }).jobId,
     });
-    assert.throws(() => beginSubmission(t.db, preparing.id, { method: "api" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, preparing.id, { method: "api", actor: "user" }), { code: "APPROVAL_REQUIRED" });
 
     rejectApplication(t.db, app.id);
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "api" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "api", actor: "user" }), { code: "APPROVAL_REQUIRED" });
     assert.equal(status(app.id), "rejected");
   });
 
@@ -115,34 +115,34 @@ describe("approval gate — repository API", () => {
     assert.equal(after.approvedAssetsSha256, null);
     const withdrawn = listApplicationEvents(t.db, app.id).find((e) => e.actor === "system" && e.fromStatus === "approved")!;
     assert.match(withdrawn.detail!, /Approval withdrawn/);
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
 
     // Re-approving the new content opens the gate again.
     approve(getApplication(t.db, app.id)!);
-    assert.equal(beginSubmission(t.db, app.id, { method: "manual" }).status, "submitting");
+    assert.equal(beginSubmission(t.db, app.id, { method: "manual", actor: "user" }).status, "submitting");
   });
 
   test("going back to review after approval requires a fresh approval", () => {
     const app = approve(readyApplication());
     transitionApplication(t.db, app.id, "ready_for_review", { actor: "user" });
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
   });
 
   test("a failed submission can be retried without re-approval, but not after edits", () => {
     const app = approve(readyApplication());
-    beginSubmission(t.db, app.id, { method: "email" });
+    beginSubmission(t.db, app.id, { method: "email", actor: "user" });
     assert.equal(recordSubmissionResult(t.db, app.id, { success: false, error: "SMTP down" }).status, "submission_failed");
-    assert.equal(beginSubmission(t.db, app.id, { method: "email" }).status, "submitting");
+    assert.equal(beginSubmission(t.db, app.id, { method: "email", actor: "user" }).status, "submitting");
     recordSubmissionResult(t.db, app.id, { success: false, error: "SMTP down again" });
 
     addApplicationAsset(t.db, { applicationId: app.id, kind: "cover_letter", origin: "user_edit", contentText: "Edited" });
     assert.equal(status(app.id), "ready_for_review");
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "email" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "email", actor: "user" }), { code: "APPROVAL_REQUIRED" });
   });
 
   test("content is locked once submission has started", () => {
     const app = approve(readyApplication());
-    beginSubmission(t.db, app.id, { method: "manual" });
+    beginSubmission(t.db, app.id, { method: "manual", actor: "user" });
     assert.throws(
       () => addApplicationAsset(t.db, { applicationId: app.id, kind: "cover_letter", origin: "user_edit", contentText: "Late edit" }),
       /ASSETS_LOCKED/
@@ -228,7 +228,7 @@ describe("approval gate — enforced by the database (bypassing the repository)"
     t.db.prepare("UPDATE application_assets SET is_current = 0 WHERE application_id = ? AND kind = 'cover_letter' AND version = 2").run(app.id);
     assert.equal(status(app.id), "ready_for_review");
     t.db.prepare("UPDATE application_assets SET is_current = 1 WHERE application_id = ? AND kind = 'cover_letter' AND version = 1").run(app.id);
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
     assert.throws(() => t.db.prepare("UPDATE applications SET status = 'submitting' WHERE id = ?").run(app.id), GATE);
   });
 

@@ -5,7 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 import { recordJobListing } from "../lib/repositories/jobs.ts";
+import { createCandidate, createProfileVersion } from "../lib/repositories/candidates.ts";
+import { recordMatch } from "../lib/repositories/matches.ts";
+import { completeRun, startRun } from "../lib/repositories/runs.ts";
 import {
   addApplicationAsset,
   approveApplication,
@@ -13,6 +17,7 @@ import {
   createApplication,
   getApplication,
   getCurrentAssetsHash,
+  recordSubmissionResult,
   transitionApplication,
 } from "../lib/repositories/applications.ts";
 import { openDatabase, resolveDbPath, DEFAULT_DB_PATH } from "../lib/database.ts";
@@ -278,7 +283,7 @@ describe("v3 → v4 upgrade", () => {
         "UPDATE applications SET status = 'approved', approved_at = datetime('now'), approved_assets_sha256 = ? WHERE id = ?"
       ).run(getCurrentAssetsHash(db, app.id), app.id);
 
-      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") }));
+      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups"), migrations: MIGRATIONS.slice(0, 4) }));
       assert.deepEqual(result.applied, [4]);
       assert.match(path.basename(result.backupPath!), /^jobs\.v3-to-v4\.\d{12}\.db$/);
       assert.equal(count(db, "seen_jobs"), 7);
@@ -286,12 +291,156 @@ describe("v3 → v4 upgrade", () => {
       const upgraded = getApplication(db, app.id)!;
       assert.equal(upgraded.status, "approved");
       assert.equal(upgraded.approvedAssetIds, null);
-      assert.throws(() => beginSubmission(db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+      assert.throws(() => beginSubmission(db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
 
       // Re-review and re-approve, then the gate opens.
       transitionApplication(db, app.id, "ready_for_review", { actor: "user" });
       approveApplication(db, app.id, { reviewedAssetsSha256: getCurrentAssetsHash(db, app.id) });
-      assert.equal(beginSubmission(db, app.id, { method: "manual" }).status, "submitting");
+      assert.equal(beginSubmission(db, app.id, { method: "manual", actor: "user" }).status, "submitting");
+    } finally {
+      db.close();
+      removeTempDir(dir);
+    }
+  });
+});
+
+describe("v4 → v5 upgrade (migration 005)", () => {
+  const TRIGGERS_005 = [
+    "trg_events_submission_statuses_by_user",
+    "trg_applications_submitted_requires_method",
+    "trg_applications_submitted_at_valid",
+    "trg_applications_reference_change_recorded",
+    "trg_events_occurred_at_valid",
+  ];
+  const triggerNames = (db: Database.Database) =>
+    new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as { name: string }[]).map((r) => r.name)
+    );
+  // Every row of every table except the migration bookkeeping.
+  const fingerprint = (db: Database.Database) => {
+    const tables = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY name")
+        .all() as { name: string }[]
+    ).map((r) => r.name);
+    return Object.fromEntries(
+      tables.map((table) => [
+        table,
+        createHash("sha256").update(JSON.stringify(db.prepare(`SELECT * FROM "${table}" ORDER BY rowid`).all())).digest("hex"),
+      ])
+    );
+  };
+
+  /** A v4 database with data shaped like the live one after the acceptance test. */
+  function seedV4(db: Database.Database): { approvedId: number; readyId: number } {
+    seedSeenJobs(db, 167);
+    db.prepare("INSERT INTO batch_runs (job_count) VALUES (1)").run();
+    db.prepare("INSERT INTO batch_results (batch_run_id, job_title, job_company, status) VALUES (1, 'Old', 'Old Co', 'pending')").run();
+    const candidate = createCandidate(db, { fullName: "A Candidate", email: "a@example.com" });
+    const profile = createProfileVersion(db, {
+      candidateId: candidate.id, origin: "ai_extraction", analysis: { _inputs: { selectedRoles: ["Dev"] } }, structuredCv: { name: "A" },
+    });
+    const run = startRun(db, { kind: "discovery", triggeredBy: "ui", candidateProfileId: profile.id });
+    completeRun(db, run.id, { rawListings: 2 });
+    const jobs = ["Full Stack Developer", "Junior Developer"].map(
+      (title, i) => recordJobListing(db, { sourceId: "adzuna", externalId: `v4-${i}`, title, company: "Acme", description: "Kotlin", runId: run.id }).jobId
+    );
+    const match = recordMatch(db, { jobId: jobs[0], candidateProfileId: profile.id, outcome: "scored", score: 83 });
+    const prepare = (jobId: number, matchId: number | null) => {
+      const app = createApplication(db, { jobId, matchId, candidateProfileId: profile.id });
+      addApplicationAsset(db, { applicationId: app.id, kind: "cover_letter", origin: "generated", contentText: "Dear Acme" });
+      addApplicationAsset(db, { applicationId: app.id, kind: "tailored_cv_file", origin: "generated", file: Buffer.from("%PDF"), filename: "cv.pdf", mimeType: "application/pdf" });
+      return transitionApplication(db, app.id, "ready_for_review", { actor: "system" });
+    };
+    const approved = prepare(jobs[0], match.id);
+    approveApplication(db, approved.id, { reviewedAssetsSha256: getCurrentAssetsHash(db, approved.id) });
+    const ready = prepare(jobs[1], null);
+    return { approvedId: approved.id, readyId: ready.id };
+  }
+
+  test("a fresh database gets migration 005 and its five triggers", () => {
+    const t = quietly(freshDb);
+    try {
+      const names = triggerNames(t.db);
+      for (const trigger of TRIGGERS_005) assert.ok(names.has(trigger), trigger);
+      const row = t.db.prepare("SELECT version, name FROM schema_migrations WHERE version = 5").get();
+      assert.deepEqual(row, { version: 5, name: "manual_submission_guard" });
+    } finally {
+      t.close();
+    }
+  });
+
+  test("keeps every row unchanged, backs up first, and the guards apply afterwards", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "jobs.db");
+    const db = new Database(file);
+    try {
+      db.pragma("journal_mode = WAL");
+      db.pragma("foreign_keys = ON");
+      quietly(() => runMigrations(db, { migrations: MIGRATIONS.slice(0, 4) }));
+      const { approvedId, readyId } = seedV4(db);
+      const before = fingerprint(db);
+      const triggersBefore = triggerNames(db);
+      for (const trigger of TRIGGERS_005) assert.equal(triggersBefore.has(trigger), false);
+
+      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") }));
+      assert.deepEqual(result.applied, [5]);
+      assert.deepEqual([result.fromVersion, result.toVersion], [4, 5]);
+      assert.match(path.basename(result.backupPath!), /^jobs\.v4-to-v5\.\d{12}\.db$/);
+
+      // Additive only: every row of every table is exactly as before.
+      assert.deepEqual(fingerprint(db), before);
+      assert.equal(count(db, "seen_jobs"), 167);
+      assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
+      assert.deepEqual(db.pragma("foreign_key_check"), []);
+      // Every earlier trigger is still there, plus the five new ones.
+      const triggersAfter = triggerNames(db);
+      for (const trigger of triggersBefore) assert.ok(triggersAfter.has(trigger), trigger);
+      assert.equal(triggersAfter.size, triggersBefore.size + TRIGGERS_005.length);
+
+      // The backup is the database exactly as it was at v4.
+      const backup = new Database(result.backupPath!, { readonly: true });
+      try {
+        assert.equal((backup.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v, 4);
+        assert.deepEqual(fingerprint(backup), before);
+        assert.equal(triggerNames(backup).has(TRIGGERS_005[0]), false);
+      } finally {
+        backup.close();
+      }
+
+      // The approved application can be submitted only by the user.
+      assert.throws(() => beginSubmission(db, approvedId, { method: "manual", actor: "system" }), /SUBMISSION_GATE/);
+      assert.equal(beginSubmission(db, approvedId, { method: "manual", actor: "user" }).status, "submitting");
+      assert.equal(recordSubmissionResult(db, approvedId, { success: true, reference: "R-1" }, "user").status, "submitted");
+      // The application awaiting review is untouched by all of this.
+      assert.equal(getApplication(db, readyId)!.status, "ready_for_review");
+
+      // Reopening applies nothing more.
+      assert.deepEqual(quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") })).applied, []);
+    } finally {
+      db.close();
+      removeTempDir(dir);
+    }
+  });
+
+  test("a failure while applying 005 leaves the database at v4", () => {
+    const dir = makeTempDir();
+    const db = new Database(path.join(dir, "jobs.db"));
+    try {
+      quietly(() => runMigrations(db, { migrations: MIGRATIONS.slice(0, 4) }));
+      seedV4(db);
+      const before = fingerprint(db);
+      const failing005: Migration = {
+        ...MIGRATIONS[4],
+        up(target) {
+          MIGRATIONS[4].up(target);
+          throw new Error("boom after creating the triggers");
+        },
+      };
+      assert.throws(() => quietly(() => runMigrations(db, { migrations: [...MIGRATIONS.slice(0, 4), failing005] })), /boom/);
+      assert.equal((db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v, 4);
+      for (const trigger of TRIGGERS_005) assert.equal(triggerNames(db).has(trigger), false);
+      assert.deepEqual(fingerprint(db), before);
     } finally {
       db.close();
       removeTempDir(dir);

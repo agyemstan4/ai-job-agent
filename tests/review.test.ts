@@ -160,7 +160,7 @@ describe("review actions and the approval gate", () => {
   });
 
   test("submission still requires the explicit approval (the review flow never submits)", () => {
-    assert.throws(() => beginSubmission(t.db, appId, { method: "manual" }), /APPROVAL_REQUIRED|approved/);
+    assert.throws(() => beginSubmission(t.db, appId, { method: "manual", actor: "user" }), /APPROVAL_REQUIRED|approved/);
     const shown = getReviewItem(t.db, appId)!;
     act(appId, { action: "approve", reviewedAssetsSha256: shown.assetsHash });
     assert.equal(getApplication(t.db, appId)!.status, "approved");

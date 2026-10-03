@@ -193,7 +193,7 @@ describe("003 legacy batch import", () => {
 
   test("a legacy approval cannot be submitted until the user re-approves", () => {
     const id = appFor(db, 2).id;
-    assert.throws(() => beginSubmission(db, id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(db, id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
     assert.throws(
       () => db.prepare("UPDATE applications SET status = 'submitting' WHERE id = ?").run(id),
       /APPROVAL_GATE|SUBMISSION_GATE|AUDIT/
@@ -201,6 +201,6 @@ describe("003 legacy batch import", () => {
 
     transitionApplication(db, id, "ready_for_review", { actor: "user", detail: "Re-review" });
     approveApplication(db, id, { reviewedAssetsSha256: getCurrentAssetsHash(db, id) });
-    assert.equal(beginSubmission(db, id, { method: "manual" }).status, "submitting");
+    assert.equal(beginSubmission(db, id, { method: "manual", actor: "user" }).status, "submitting");
   });
 });

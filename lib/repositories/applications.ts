@@ -620,6 +620,7 @@ export function rejectApplication(db: DB, id: number, options: { note?: string |
  * The gate every future submission path must pass through. It does NOT
  * submit anything; it verifies the explicit, current user approval and moves
  * the application to "submitting". Throws APPROVAL_REQUIRED otherwise.
+ * Since migration 005 the database requires actor "user" for this move.
  */
 export function beginSubmission(
   db: DB,
@@ -676,12 +677,16 @@ export function beginSubmission(
   })();
 }
 
-/** Records the outcome of a submission attempt that passed beginSubmission. */
+/**
+ * Records the outcome of a submission attempt that passed beginSubmission.
+ * Since migration 005 the database accepts a successful submission (and the
+ * move to submitting) only with actor "user".
+ */
 export function recordSubmissionResult(
   db: DB,
   id: number,
   result: { success: true; reference?: string | null } | { success: false; error: string },
-  actor: Exclude<Actor, "user"> = "system"
+  actor: Actor = "system"
 ): Application {
   return db.transaction(() => {
     const application = requireApplication(db, id);

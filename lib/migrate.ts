@@ -6,6 +6,7 @@ import { migration001Baseline } from "./migrations/001_baseline.ts";
 import { migration002CoreSchema } from "./migrations/002_core_schema.ts";
 import { migration003ImportLegacyBatches } from "./migrations/003_import_legacy_batches.ts";
 import { migration004ApprovalGateHardening } from "./migrations/004_approval_gate_hardening.ts";
+import { migration005ManualSubmissionGuard } from "./migrations/005_manual_submission_guard.ts";
 
 export type Migration = {
   version: number;
@@ -23,6 +24,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration002CoreSchema,
   migration003ImportLegacyBatches,
   migration004ApprovalGateHardening,
+  migration005ManualSubmissionGuard,
 ];
 
 export type MigrationResult = {

@@ -48,8 +48,8 @@ const approve = (id: number) =>
 
 function submitted(): Application {
   const app = approve(readyApplication().id);
-  beginSubmission(t.db, app.id, { method: "manual" });
-  return recordSubmissionResult(t.db, app.id, { success: true, reference: "REF" });
+  beginSubmission(t.db, app.id, { method: "manual", actor: "user" });
+  return recordSubmissionResult(t.db, app.id, { success: true, reference: "REF" }, "user");
 }
 
 /** An application as migration 003 imports a legacy "approved" batch result. */
@@ -187,18 +187,18 @@ describe("004 — database enforcement (bypassing the repository)", () => {
       "INSERT INTO application_assets (application_id, kind, version, origin, content_json, sha256) VALUES (?, 'question_answers', 1, 'legacy_import', '[]', 'x')"
     ).run(app.id);
     assert.equal(status(app.id), "approved");
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
     t.db.prepare(
-      "INSERT INTO application_events (application_id, event_type, from_status, to_status, actor) VALUES (?, 'status_change', 'approved', 'submitting', 'system')"
+      "INSERT INTO application_events (application_id, event_type, from_status, to_status, actor) VALUES (?, 'status_change', 'approved', 'submitting', 'user')"
     ).run(app.id);
     assert.throws(raw("UPDATE applications SET status = 'submitting' WHERE id = ?", app.id), /APPROVAL_GATE/);
   });
 
   test("submitted requires submitted_at", () => {
     const app = approve(readyApplication().id);
-    beginSubmission(t.db, app.id, { method: "manual" });
+    beginSubmission(t.db, app.id, { method: "manual", actor: "user" });
     t.db.prepare(
-      "INSERT INTO application_events (application_id, event_type, from_status, to_status, actor) VALUES (?, 'submission_attempt', 'submitting', 'submitted', 'system')"
+      "INSERT INTO application_events (application_id, event_type, from_status, to_status, actor) VALUES (?, 'submission_attempt', 'submitting', 'submitted', 'user')"
     ).run(app.id);
     assert.throws(raw("UPDATE applications SET status = 'submitted' WHERE id = ?", app.id), /SUBMISSION_GATE/);
   });
@@ -267,7 +267,7 @@ describe("004 — H1–H3: the bypasses found in the final review", () => {
     assert.throws(raw("UPDATE applications SET job_id = ? WHERE id = ?", otherJob.jobId, app.id), /IMMUTABLE: an application's job/);
     assert.equal(getApplication(t.db, app.id)!.jobId, app.jobId);
     // The legitimate submission still targets the job that was approved.
-    assert.equal(beginSubmission(t.db, app.id, { method: "manual" }).jobId, app.jobId);
+    assert.equal(beginSubmission(t.db, app.id, { method: "manual", actor: "user" }).jobId, app.jobId);
   });
 
   test("H1: legacy_import assets are rejected on normal applications in any status", () => {
@@ -312,7 +312,7 @@ describe("004 — H1–H3: the bypasses found in the final review", () => {
       raw("UPDATE applications SET approved_asset_ids = ? WHERE id = ?", currentAssetIdSet(t.db, app.id), app.id),
       /IMMUTABLE/
     );
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
   });
 
   test("H2: setting the snapshot alongside a non-approval status change is refused", () => {
@@ -330,7 +330,7 @@ describe("004 — H1–H3: the bypasses found in the final review", () => {
     const app = approve(readyApplication().id);
     t.db.prepare("UPDATE applications SET approved_asset_ids = NULL WHERE id = ?").run(app.id);
     assert.equal(getApplication(t.db, app.id)!.approvedAssetIds, null);
-    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual" }), { code: "APPROVAL_REQUIRED" });
+    assert.throws(() => beginSubmission(t.db, app.id, { method: "manual", actor: "user" }), { code: "APPROVAL_REQUIRED" });
   });
 
   test("H2: the legitimate repository paths still set and clear the snapshot", () => {
