@@ -2,17 +2,30 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import ApplicationsTabs from "@/app/components/ApplicationsTabs";
 import type { ReviewItem } from "@/lib/repositories/review";
 
 type Filter = "pending" | "approved" | "rejected" | "failed" | "withdrawn" | "all";
 
-// How each application status is shown (the tabs use the same names).
+// How each application status is shown (matching the filter tab names).
 const STATUS_LABEL: Record<string, string> = {
-  preparing: "preparing",
-  ready_for_review: "pending",
-  preparation_failed: "failed",
+  preparing: "Preparing",
+  ready_for_review: "To review",
+  preparation_failed: "Preparation failed",
+  approved: "Approved",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
 };
 const statusLabel = (status: string) => STATUS_LABEL[status] ?? status;
+
+const REVIEW_FILTER_LABELS = {
+  pending: "To review",
+  approved: "Approved",
+  rejected: "Rejected",
+  failed: "Failed",
+  withdrawn: "Withdrawn",
+  all: "All",
+} as const;
 
 export default function ReviewQueue() {
   const [results, setResults] = useState<ReviewItem[]>([]);
@@ -108,47 +121,33 @@ export default function ReviewQueue() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-100 p-8">
-      <div className="mx-auto max-w-5xl">
+    <main className="w-full py-6 sm:py-8">
+      <div className="app-shell">
 
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900">Review Queue</h1>
-            <p className="mt-1 text-gray-600">
-              Approve to open the job and apply yourself. Reject to skip. Edit cover letters before approving.
-              Nothing is ever submitted for you.
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Link
-              href="/applications"
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              🗂 Applications
-            </Link>
-            <Link
-              href="/"
-              className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-            >
-              ← Back to Agent
-            </Link>
-          </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Applications</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Ready for your review</h1>
+          <p className="mt-2 max-w-3xl text-slate-600">
+            Your agent prepared these drafts. Check each one and edit the cover letter if you like. Approve it to open the
+            job and apply yourself, or reject it to skip. Nothing is ever submitted for you.
+          </p>
         </div>
+        <ApplicationsTabs />
 
         {/* Filter Tabs */}
-        <div className="mt-6 flex gap-2">
+        <div className="mt-6 flex gap-2 overflow-x-auto pb-1">
           {(["pending", "approved", "rejected", "failed", "withdrawn", "all"] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold capitalize transition ${
+              className={`min-h-10 shrink-0 rounded-full px-4 text-sm font-medium ring-1 ring-inset transition ${
                 filter === f
-                  ? "bg-blue-600 text-white"
-                  : "bg-white text-gray-600 hover:bg-gray-50"
+                  ? "bg-slate-900 text-white ring-slate-900"
+                  : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-50"
               }`}
             >
-              {f}
+              {REVIEW_FILTER_LABELS[f]}
               {f === "pending" && pendingCount > 0 && filter !== "pending" && (
                 <span className="ml-2 rounded-full bg-yellow-400 px-2 py-0.5 text-xs text-white">
                   {pendingCount}
@@ -158,37 +157,37 @@ export default function ReviewQueue() {
           ))}
           <button
             onClick={fetchResults}
-            className="ml-auto rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+            className="ml-auto min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           >
-            🔄 Refresh
+            ↻ Refresh
           </button>
         </div>
 
         {/* Results */}
-        <div className="mt-6 space-y-6">
+        <div className="mt-6 grid items-start gap-6 xl:grid-cols-2">
           {loading ? (
-            <div className="rounded-xl bg-white p-8 text-center text-gray-500 shadow">
-              Loading...
+            <div className="rounded-2xl bg-white p-8 text-center text-slate-600 ring-1 ring-slate-200/80 xl:col-span-2" role="status">
+              Loading your applications…
             </div>
           ) : results.length === 0 ? (
-            <div className="rounded-xl bg-white p-8 text-center shadow">
-              <p className="text-gray-500">
+            <div className="rounded-2xl bg-white p-8 text-center ring-1 ring-slate-200/80 xl:col-span-2">
+              <p className="text-slate-600">
                 {filter === "pending"
-                  ? "No pending applications. Run a batch from the main page first."
+                  ? "Nothing is waiting for your review. Prepare an application from your matches and it will appear here."
                   : `No ${filter} applications yet.`}
               </p>
               <Link
-                href="/"
-                className="mt-4 inline-block rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                href="/#jobs"
+                className="mt-4 inline-flex min-h-11 items-center rounded-lg bg-indigo-600 px-5 font-semibold text-white hover:bg-indigo-500"
               >
-                Go run a batch →
+                See my matches →
               </Link>
             </div>
           ) : (
             results.map((result) => (
               <div
                 key={result.id}
-                className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
+                className="min-w-0 rounded-2xl bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-slate-200/80 sm:p-6"
               >
                 {/* Job Header */}
                 <div className="flex items-start justify-between gap-4">
@@ -198,11 +197,11 @@ export default function ReviewQueue() {
                     </h2>
                     <p className="text-gray-600">
                       {result.job.company}
-                      {result.job.location ? ` • 📍 ${result.job.location}` : ""}
+                      {result.job.location ? ` · ${result.job.location}` : ""}
                     </p>
                     {result.job.salaryMin && result.job.salaryMax && (
                       <p className="mt-1 font-semibold text-green-600">
-                        💷 £{result.job.salaryMin.toLocaleString()} – £{result.job.salaryMax.toLocaleString()}
+                        £{result.job.salaryMin.toLocaleString()} – £{result.job.salaryMax.toLocaleString()}
                       </p>
                     )}
                     <p className="mt-1 text-sm text-gray-500">
@@ -220,7 +219,7 @@ export default function ReviewQueue() {
                       </div>
                     )}
                     <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${statusColour(result.status)}`}
+                      className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold ${statusColour(result.status)}`}
                     >
                       {statusLabel(result.status)}
                     </span>
@@ -229,7 +228,7 @@ export default function ReviewQueue() {
 
                 {result.lastError && (
                   <p className="mt-4 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">
-                    ⚠️ {result.lastError}
+                    {result.lastError}
                   </p>
                 )}
 
@@ -241,7 +240,7 @@ export default function ReviewQueue() {
                       download={result.cvFile.filename ?? undefined}
                       className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                     >
-                      📄 Download Tailored CV
+                      Download tailored CV
                     </a>
                   </div>
                 )}
@@ -251,7 +250,7 @@ export default function ReviewQueue() {
                   <div className="mt-4">
                     <div className="flex items-center justify-between">
                       <h3 className="font-semibold text-gray-900">
-                        ✍️ Cover Letter
+                        Cover letter
                         {result.coverLetter.version > 1 && (
                           <span className="ml-2 text-xs font-normal text-gray-500">
                             version {result.coverLetter.version}
@@ -292,7 +291,7 @@ export default function ReviewQueue() {
                           <button
                             onClick={() => saveCoverLetter(result)}
                             disabled={saving[result.id]}
-                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
                           >
                             {saving[result.id] ? "Saving..." : "Save"}
                           </button>
@@ -333,14 +332,14 @@ export default function ReviewQueue() {
                       disabled={saving[result.id]}
                       className="rounded-lg bg-green-600 px-6 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50"
                     >
-                      {saving[result.id] ? "..." : "✅ Approve & Open Job"}
+                      {saving[result.id] ? "..." : "Approve & Open Job"}
                     </button>
                     <button
                       onClick={() => updateStatus(result, "reject")}
                       disabled={saving[result.id]}
                       className="rounded-lg bg-red-100 px-6 py-2 font-semibold text-red-700 hover:bg-red-200 disabled:opacity-50"
                     >
-                      ❌ Reject
+                      Reject
                     </button>
                     {result.job.url && (
                       <a
@@ -349,7 +348,7 @@ export default function ReviewQueue() {
                         rel="noopener noreferrer"
                         className="rounded-lg bg-gray-100 px-6 py-2 font-semibold text-gray-700 hover:bg-gray-200"
                       >
-                        👀 Preview Job
+                        Preview Job
                       </a>
                     )}
                   </div>
@@ -362,7 +361,7 @@ export default function ReviewQueue() {
                         href={result.job.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700"
+                        className="rounded-lg bg-indigo-600 px-6 py-2 font-semibold text-white hover:bg-indigo-500"
                       >
                         Apply Now →
                       </a>

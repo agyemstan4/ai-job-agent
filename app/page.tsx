@@ -101,7 +101,7 @@ export default function Home() {
     }
 
     setLoading(true);
-    setLoadingStep("📄 Reading your CV...");
+    setLoadingStep("Reading your CV…");
     setAnalysis(null);
     setCandidateProfileId(null);
     setMatches(null);
@@ -113,7 +113,7 @@ export default function Home() {
       formData.append("cv", selectedFile);
       formData.append("roles", JSON.stringify(selectedRoles));
 
-      setLoadingStep("🤖 Analysing your CV...");
+      setLoadingStep("Understanding your experience…");
 const combinedResponse = await fetch("/api/analyse-and-extract", {
   method: "POST",
   body: formData,
@@ -136,7 +136,7 @@ if (combinedData.structuredCV) {
 }
       
 
-      setLoadingStep("🔍 Finding suitable jobs...");
+      setLoadingStep("Searching for jobs…");
 
       const jobsResponse = await fetch("/api/jobs", {
         method: "POST",
@@ -171,7 +171,7 @@ if (combinedData.structuredCV) {
         created: job.created,
       }));
 
-      setLoadingStep("🧠 AI ranking the best jobs...");
+      setLoadingStep("Ranking the best matches…");
 
       const matchResponse = await fetch("/api/match", {
         method: "POST",
@@ -456,75 +456,98 @@ if (combinedData.structuredCV) {
   }
 
   return (
-    <main className="min-h-screen w-full min-w-0 px-4 py-6 sm:px-6 sm:py-10">
-      <div className="mx-auto max-w-6xl">
+    <main className="w-full min-w-0 py-6 sm:py-8">
+      <div className="app-shell">
 
-        {/* Navigation (Home, Jobs, Review, Applications, Preferences) is in the app layout. */}
+        {/* Navigation (Home, Find Jobs, Applications, Preferences) is in the app layout. */}
         <CommandCentre />
 
-        <div id="search" className="mt-16 border-t border-slate-200 pt-10">
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Find new jobs</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Upload your CV and run <strong>Find Suitable Jobs</strong>: your agent searches Adzuna and Reed using your{" "}
-            <Link href="/preferences" className="font-medium text-indigo-600 hover:text-indigo-500">search preferences</Link>, then scores every new match.
+        <section id="search" aria-labelledby="find-jobs-heading" className="mt-14 scroll-mt-20 rounded-3xl bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-slate-200/80 sm:p-8">
+          <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Find new jobs</p>
+          <h2 id="find-jobs-heading" className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">Tell your agent what you want. It searches the market for you.</h2>
+          <p className="mt-1.5 max-w-3xl text-slate-600">
+            Your agent searches several job sites using your{" "}
+            <Link href="/preferences" className="font-medium text-indigo-700 underline-offset-2 hover:underline">search preferences</Link>, then ranks every new job against your CV.
             You always review and submit applications yourself.
           </p>
-        </div>
 
-        {/* CV Upload */}
-        <div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">
-          <h2 className="text-2xl font-semibold text-gray-900">Your CV</h2>
-          <p className="mt-2 text-gray-600">Upload your PDF CV.</p>
-          <label className="mt-6 inline-block cursor-pointer rounded-lg bg-black px-5 py-3 text-white hover:bg-gray-800">
-            Upload CV
-            <input
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) setSelectedFile(file);
-              }}
-            />
-          </label>
-          {selectedFile && (
-            <p className="mt-4 text-green-600">✓ {selectedFile.name}</p>
-          )}
-        </div>
+          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+            {/* CV Upload */}
+            <div className="flex flex-col rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70">
+              <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">1</span>
+                Your CV
+              </p>
+              <p className="mt-2 text-sm text-slate-600">Upload your CV as a PDF. Your agent reads it to understand your skills and experience.</p>
+              <div className="mt-auto pt-4">
+                <label className="inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-slate-900 px-5 text-sm font-semibold text-white focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-indigo-600 hover:bg-slate-700">
+                  {selectedFile ? "Choose a different CV" : "Upload CV"}
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setSelectedFile(file);
+                    }}
+                  />
+                </label>
+                {selectedFile && (
+                  <p className="mt-3 text-sm font-medium text-emerald-800"><span aria-hidden="true">✓ </span>{selectedFile.name}</p>
+                )}
+              </div>
+            </div>
 
-        {/* Target Roles */}
-        <div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">
-          <h2 className="text-2xl font-semibold text-gray-900">Target Roles</h2>
-          <div className="mt-4 flex flex-wrap gap-3">
-            {roles.map((role) => (
-              <button
-                key={role}
-                onClick={() => toggleRole(role)}
-                className={`rounded-full px-4 py-2 transition ${
-                  selectedRoles.includes(role)
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
-              >
-                {role}
-              </button>
-            ))}
+            {/* Target Roles */}
+            <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70">
+              <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">2</span>
+                Jobs you want
+              </p>
+              <p className="mt-2 text-sm text-slate-600">Pick the kinds of role you&rsquo;re interested in.</p>
+              <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Target roles">
+                {roles.map((role) => (
+                  <button
+                    key={role}
+                    onClick={() => toggleRole(role)}
+                    aria-pressed={selectedRoles.includes(role)}
+                    className={`min-h-9 rounded-full px-3.5 text-sm font-medium ring-1 ring-inset transition ${
+                      selectedRoles.includes(role)
+                        ? "bg-indigo-600 text-white ring-indigo-600"
+                        : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-100"
+                    }`}
+                  >
+                    {selectedRoles.includes(role) && <span aria-hidden="true">✓ </span>}{role}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Find Jobs Button */}
+            <div className="flex flex-col rounded-2xl bg-indigo-50/70 p-5 ring-1 ring-inset ring-indigo-200/70">
+              <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">3</span>
+                Search
+              </p>
+              <p className="mt-2 text-sm text-slate-600">Your agent reads your CV, searches for jobs and ranks the best matches. This can take a few minutes.</p>
+              <div className="mt-auto pt-4">
+                <button
+                  onClick={analyseCV}
+                  disabled={loading}
+                  className="min-h-12 w-full rounded-xl bg-indigo-600 px-5 font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  {loading ? loadingStep : "Find Suitable Jobs"}
+                </button>
+                <p className="mt-2 text-center text-sm text-slate-600" aria-live="polite">{loading ? "Working… you can keep browsing this page." : selectedFile ? "Ready when you are." : "Upload your CV first."}</p>
+              </div>
+            </div>
           </div>
-        </div>
-
-        {/* Find Jobs Button */}
-        <button
-          onClick={analyseCV}
-          disabled={loading}
-          className="mt-6 w-full rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? loadingStep : "Find Suitable Jobs"}
-        </button>
+        </section>
 
         {/* Analysis + Job Cards */}
         {analysis && (
-          <div className="mt-8 rounded-xl bg-white p-6 text-gray-900 shadow">
-            <h2 className="text-2xl font-semibold">AI Analysis</h2>
+          <div className="mt-8 rounded-3xl bg-white p-5 text-slate-900 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-slate-200/80 sm:p-8">
+            <h2 className="text-2xl font-semibold tracking-tight">Your CV analysis</h2>
 
             <h3 className="mt-6 text-xl font-semibold">Candidate Match Score</h3>
             <p className="mt-2 text-3xl font-bold">
@@ -598,7 +621,7 @@ if (combinedData.structuredCV) {
                   </li>
                 ))
               ) : (
-                <li>No major skill gaps detected 🎉</li>
+                <li>No major skill gaps detected</li>
               )}
             </ul>
 
@@ -612,8 +635,8 @@ if (combinedData.structuredCV) {
             {/* Job Cards */}
             {matches && matches.length > 0 && (
               <div className="mt-10">
-                <h2 className="text-3xl font-bold">🎯 Best Job Matches</h2>
-                <p className="mt-2 text-gray-600">Ranked by AI based on your CV.</p>
+                <h2 className="text-2xl font-semibold tracking-tight">Best matches from this search</h2>
+                <p className="mt-2 text-slate-600">Ranked against your CV. They also appear in Your opportunities above.</p>
 
                 {/* Batch Apply Bar */}
                 <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-gray-50 p-4">
@@ -718,13 +741,13 @@ if (combinedData.structuredCV) {
                       </div>
 
                       <div className="mt-5">
-                        <h4 className="font-semibold">🤖 AI Recommendation</h4>
+                        <h4 className="font-semibold">Why this job fits you</h4>
                         <p className="mt-2 text-gray-700">{job.reason}</p>
                       </div>
 
                       {job.breakdown && (
                         <div className="mt-5">
-                          <h4 className="font-semibold">📊 AI Compatibility Breakdown</h4>
+                          <h4 className="font-semibold">How you match</h4>
                           <div className="mt-3 grid grid-cols-2 gap-3">
                             <div className="rounded-lg bg-gray-100 p-3">
                               💻 Technical Skills
@@ -803,7 +826,7 @@ if (combinedData.structuredCV) {
 
                         {/* Application Questions */}
                         <div className="mt-6 rounded-xl bg-gray-50 p-4">
-                          <h4 className="font-semibold text-gray-900">📝 Application Questions</h4>
+                          <h4 className="font-semibold text-gray-900">Application questions</h4>
                           <p className="mt-1 text-sm text-gray-600">
                             Paste each application question on its own line.
                           </p>

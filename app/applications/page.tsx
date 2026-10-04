@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import ApplicationsTabs from "@/app/components/ApplicationsTabs";
 import type { ReviewItem } from "@/lib/repositories/review";
 import {
   buildMarkSubmittedRequest,
@@ -28,7 +29,7 @@ import type { MarkAppliedForm, StatusUpdateForm, TrackerTab } from "@/lib/tracke
 // Nothing on this page submits an application or sends anything.
 
 const EMPTY_MESSAGES: Record<TrackerTab, string> = {
-  to_apply: "No approved applications are waiting. Approve applications in the Review Queue first.",
+  to_apply: "No approved applications are waiting. Approve applications in Ready for review first.",
   applied: "No applications marked as applied yet.",
   closed: "No closed applications.",
   tracked: "Nothing tracked yet.",
@@ -75,41 +76,27 @@ export default function ApplicationsTracker() {
   const refresh = () => setReloadKey((key) => key + 1);
 
   return (
-    <main className="min-h-screen bg-gray-100 p-8">
-      <div className="mx-auto max-w-5xl">
+    <main className="w-full py-6 sm:py-8">
+      <div className="app-shell">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900">Applications</h1>
-            <p className="mt-1 text-gray-600">
-              &ldquo;Apply Now&rdquo; only opens the employer&rsquo;s site. After you have submitted the application
-              there yourself, use &ldquo;Mark as applied&rdquo; to record it. Nothing is ever submitted for you.
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Link
-              href="/review"
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-            >
-              📋 Review Queue
-            </Link>
-            <Link
-              href="/"
-              className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-            >
-              ← Back to Agent
-            </Link>
-          </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Applications</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Your applications</h1>
+          <p className="mt-2 max-w-3xl text-slate-600">
+            &ldquo;Apply Now&rdquo; only opens the employer&rsquo;s site. After you have submitted the application
+            there yourself, use &ldquo;Mark as applied&rdquo; to record it, then track the response here. Nothing is ever submitted for you.
+          </p>
         </div>
+        <ApplicationsTabs />
 
         {/* Tabs */}
-        <div className="mt-6 flex flex-wrap gap-2">
+        <div className="mt-6 flex gap-2 overflow-x-auto pb-1">
           {TRACKER_TABS.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                tab === t.key ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+              className={`min-h-10 shrink-0 rounded-full px-4 text-sm font-medium ring-1 ring-inset transition ${
+                tab === t.key ? "bg-slate-900 text-white ring-slate-900" : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-50"
               }`}
             >
               {t.label}
@@ -117,35 +104,35 @@ export default function ApplicationsTracker() {
           ))}
           <button
             onClick={refresh}
-            className="ml-auto rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+            className="ml-auto min-h-10 shrink-0 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           >
-            🔄 Refresh
+            ↻ Refresh
           </button>
         </div>
 
         {/* Content */}
-        <div className="mt-6 space-y-6">
+        <div className="mt-6 grid items-start gap-6 xl:grid-cols-2">
           {loading ? (
-            <div className="rounded-xl bg-white p-8 text-center text-gray-500 shadow">Loading...</div>
+            <div className="rounded-2xl bg-white p-8 text-center text-slate-600 ring-1 ring-slate-200/80 xl:col-span-2" role="status">Loading your applications…</div>
           ) : error ? (
-            <div className="rounded-xl bg-white p-8 text-center shadow">
-              <p className="text-red-700">⚠️ {error}</p>
+            <div className="rounded-2xl bg-white p-8 text-center ring-1 ring-slate-200/80 xl:col-span-2" role="alert">
+              <p className="font-medium text-rose-800">{error}</p>
               <button
                 onClick={refresh}
-                className="mt-4 rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                className="mt-4 rounded-lg bg-indigo-600 px-5 py-2 font-semibold text-white hover:bg-indigo-500"
               >
                 Try again
               </button>
             </div>
           ) : items.length === 0 ? (
-            <div className="rounded-xl bg-white p-8 text-center shadow">
-              <p className="text-gray-500">{EMPTY_MESSAGES[tab]}</p>
+            <div className="rounded-2xl bg-white p-8 text-center ring-1 ring-slate-200/80 xl:col-span-2">
+              <p className="text-slate-600">{EMPTY_MESSAGES[tab]}</p>
               {tab === "to_apply" && (
                 <Link
                   href="/review"
-                  className="mt-4 inline-block rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white hover:bg-blue-700"
+                  className="mt-4 inline-block rounded-lg bg-indigo-600 px-5 py-2 font-semibold text-white hover:bg-indigo-500"
                 >
-                  Go to the Review Queue →
+                  See applications ready for review →
                 </Link>
               )}
             </div>
@@ -167,11 +154,11 @@ function TrackerCard({ item, onChanged }: { item: ReviewItem; onChanged: () => v
           <h2 className="text-xl font-bold text-gray-900">{item.job.title}</h2>
           <p className="text-gray-600">
             {item.job.company}
-            {item.job.location ? ` • 📍 ${item.job.location}` : ""}
+            {item.job.location ? ` · ${item.job.location}` : ""}
           </p>
           {item.job.salaryMin && item.job.salaryMax && (
             <p className="mt-1 font-semibold text-green-600">
-              💷 £{item.job.salaryMin.toLocaleString()} – £{item.job.salaryMax.toLocaleString()}
+              £{item.job.salaryMin.toLocaleString()} – £{item.job.salaryMax.toLocaleString()}
             </p>
           )}
           <p className="mt-1 text-sm text-gray-500">Approved {formatStored(item.approvedAt)}</p>
@@ -220,7 +207,7 @@ function ApplyNowLink({ url }: { url: string | null }) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700"
+      className="rounded-lg bg-indigo-600 px-6 py-2 font-semibold text-white hover:bg-indigo-500"
     >
       Apply Now ↗
     </a>
@@ -242,13 +229,13 @@ function ApprovedAssets({ item }: { item: ReviewItem }) {
             download={item.cvFile.filename ?? undefined}
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
           >
-            📄 Download Tailored CV
+            Download tailored CV
           </a>
         )}
       </div>
       {item.coverLetter && (
         <details className="mt-3">
-          <summary className="cursor-pointer text-sm font-semibold text-gray-700">✍️ Cover letter</summary>
+          <summary className="cursor-pointer text-sm font-semibold text-gray-700">Cover letter</summary>
           <div className="mt-2 rounded-lg bg-gray-50 p-4 text-sm leading-relaxed whitespace-pre-wrap text-gray-700">
             {item.coverLetter.text}
           </div>
@@ -276,7 +263,7 @@ function MarkAppliedPanel({ item, onDone }: { item: ReviewItem; onDone: () => vo
           }}
           className="rounded-lg bg-green-600 px-6 py-2 font-semibold text-white hover:bg-green-700"
         >
-          ✅ Mark as applied…
+          Mark as applied…
         </button>
         <p className="mt-1 text-sm text-gray-500">Use this only after you have submitted the application yourself.</p>
       </div>
@@ -377,7 +364,7 @@ function MarkAppliedPanel({ item, onDone }: { item: ReviewItem; onDone: () => vo
         />
       </label>
 
-      {error && <p className="mt-3 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">⚠️ {error}</p>}
+      {error && <p className="mt-3 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">{error}</p>}
 
       <div className="mt-4 flex gap-2">
         <button
@@ -476,7 +463,7 @@ function ReferenceEditor({ item, onDone }: { item: ReviewItem; onDone: () => voi
           <button
             onClick={save}
             disabled={saving}
-            className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save reference"}
           </button>
@@ -502,7 +489,7 @@ function ReferenceEditor({ item, onDone }: { item: ReviewItem; onDone: () => voi
           </button>
         </p>
       )}
-      {error && <p className="mt-2 rounded-lg bg-amber-50 px-4 py-2 text-amber-800">⚠️ {error}</p>}
+      {error && <p className="mt-2 rounded-lg bg-amber-50 px-4 py-2 text-amber-800">{error}</p>}
       {item.referenceHistory.length > 0 && (
         <ul className="mt-2 list-disc pl-5 text-xs text-gray-500">
           {item.referenceHistory.map((change) => (
@@ -586,11 +573,11 @@ function StatusUpdatePanel({ item, onDone }: { item: ReviewItem; onDone: () => v
       {withdrawing && (
         <p className="mt-1 text-xs text-gray-500">Withdrawn is final. Your reason is kept with the application.</p>
       )}
-      {error && <p className="mt-3 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">⚠️ {error}</p>}
+      {error && <p className="mt-3 rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">{error}</p>}
       <button
         onClick={save}
         disabled={saving || !form.to}
-        className="mt-3 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+        className="mt-3 rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
       >
         {saving ? "Saving..." : "Save status"}
       </button>

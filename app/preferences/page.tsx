@@ -111,25 +111,23 @@ export default function PreferencesPage() {
   const others = otherFieldErrors(fieldErrors).filter(Boolean);
 
   return (
-    <main className="min-h-screen bg-gray-100 p-8">
-      <div className="mx-auto max-w-3xl">
+    <main className="w-full py-6 sm:py-8">
+      <div className="app-shell">
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,48rem)_minmax(16rem,22rem)]">
+        <div className="min-w-0">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900">Search preferences</h1>
-            <p className="mt-1 text-gray-600">
-              Choose what job searches look for. Saving only changes your preferences; it does not search, apply or
-              send anything.
-            </p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Link
-              href="/"
-              className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-            >
-              ← Back to Agent
-            </Link>
-          </div>
+        <div>
+          <Link
+            href="/"
+            className="text-sm font-medium text-slate-600 hover:text-slate-900"
+          >
+            ← Home
+          </Link>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">Search preferences</h1>
+          <p className="mt-2 text-slate-600">
+            Tell your agent what kind of job to look for. Saving only changes your preferences; it does not search, apply or
+            send anything.
+          </p>
         </div>
 
         {loading ? (
@@ -138,7 +136,7 @@ export default function PreferencesPage() {
           <div className="mt-6 rounded-xl bg-white p-8 text-center shadow">
             <p className="font-semibold text-gray-900">{noCandidate}</p>
             <p className="mt-2 text-gray-600">Preferences are saved with your profile, which is created when you upload your CV.</p>
-            <Link href="/" className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
+            <Link href="/" className="mt-4 inline-block rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-500">
               Upload your CV
             </Link>
           </div>
@@ -239,7 +237,7 @@ export default function PreferencesPage() {
               <button
                 onClick={save}
                 disabled={disabled}
-                className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
               >
                 {busy === "saving" ? "Saving…" : "Save preferences"}
               </button>
@@ -253,6 +251,16 @@ export default function PreferencesPage() {
             </div>
           </div>
         )}
+        </div>
+        <aside className="rounded-2xl bg-white p-5 ring-1 ring-slate-200/80 lg:mt-[7.5rem]" aria-label="Tips">
+          <h2 className="text-base font-semibold text-slate-900">Tips</h2>
+          <ul className="mt-3 space-y-3 text-sm text-slate-700">
+            <li><span className="font-semibold text-slate-900">Search terms:</span> use the job titles you would type into a job site, such as &ldquo;junior developer&rdquo;.</li>
+            <li><span className="font-semibold text-slate-900">Exclude:</span> add words like &ldquo;Senior&rdquo; or &ldquo;Lead&rdquo; to skip roles above your level.</li>
+            <li><span className="font-semibold text-slate-900">When it applies:</span> your next <Link href="/#search" className="font-medium text-indigo-700 hover:underline">Find Suitable Jobs</Link> search uses what you save here.</li>
+          </ul>
+        </aside>
+        </div>
       </div>
     </main>
   );

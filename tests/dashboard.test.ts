@@ -375,18 +375,22 @@ describe("3c v2: Command Centre, navigation and home page (source checks)", () =
     assert.ok(component.startsWith('"use client";'));
     // Since 3d the first load also reads the preparation queue.
     assert.match(component, /useEffect\(\(\) => \{\s*let cancelled = false;\s*Promise\.all\(\[loadDashboard\(\), loadPreparationStatus\(\)\]\)\.then/);
-    for (const text of ["Let&rsquo;s find your next move.", "Find new jobs", "Edit preferences", "Recommended for you", "Why this job fits you", "Your advantage", "Potential gap", "How you match", "Your opportunities", "Your progress", "New since your last visit", "Strong matches today", "Waiting for your review", "Ready to apply", "Try again", "No CV profile yet", "No scored matches yet"]) {
+    // Since the usability pass: a guided next step, the strongest opportunity and a "Why?" per job.
+    for (const text of ["Let&rsquo;s find your next move.", "Your next step", "Find new jobs", "Edit preferences", "Your strongest opportunity", "Why this job fits you", "Your advantage", "Potential gap", "How you match", "Why?", "Your opportunities", "Your progress", "While you were away", "New since your last visit", "Waiting for your review", "Ready to apply", "How your agent helps", "Try again", "No CV profile yet", "No scored matches yet"]) {
       assert.ok(component.includes(text), text);
     }
     assert.match(component, /dashboard\?\.firstName \? `, \$\{dashboard\.firstName\}` : ""/);
   });
 
   test("retention sections only render with real data", () => {
-    assert.match(component, /\{fresh\.length > 0 && \(/);
-    assert.match(component, /\{stats\.strongToday > 0 && \(/);
-    assert.match(component, /\{stats\.needsReview > 0 && \(/);
-    assert.match(component, /\{stats\.readyToApply > 0 && \(/);
-    assert.match(component, /\{progress\.length > 0 && \(/);
+    // "While you were away" needs a previous visit and real activity (awayMessage returns null otherwise).
+    assert.match(component, /const awayText = lastVisit === null\s*\? null\s*: awayMessage\(/);
+    assert.match(component, /\{awayText && \(/);
+    assert.match(component, /\{fresh\.length > 0 && <a href="#jobs"/);
+    assert.match(component, /isNew=\{freshIds\.has\(match\.matchId\)\}/);
+    assert.match(component, /stats\.strongToday > 0 \?/);
+    assert.match(component, /stats\.readyToApply > 0 \?/);
+    assert.match(component, /\{progress\.length > 0 && /);
     assert.match(component, /window\.localStorage\.getItem\(LAST_VISIT_KEY\)/);
   });
 
@@ -405,7 +409,10 @@ describe("3c v2: Command Centre, navigation and home page (source checks)", () =
   test("navigation: existing routes only, top bar on desktop, bottom tab bar on mobile, in the layout", () => {
     assert.match(layout, /<AppNav \/>/);
     const hrefs = [...nav.matchAll(/href: "([^"]+)"/g)].map((x) => x[1]);
-    assert.deepEqual(hrefs, ["/", "/#jobs", "/review", "/applications", "/preferences"]);
+    // Since the usability pass: plain-language sections; /review lives under Applications (tabs).
+    assert.deepEqual(hrefs, ["/", "/#search", "/applications", "/preferences"]);
+    assert.deepEqual([...nav.matchAll(/label: "([^"]+)"/g)].map((x) => x[1]), ["Home", "Find Jobs", "Applications", "Preferences"]);
+    assert.match(nav, /import \{ activeSection \} from "@\/lib\/nav";/);
     assert.match(nav, /className="hidden items-center gap-1 md:flex"/);
     assert.match(nav, /fixed inset-x-0 bottom-0 z-40[^"]*md:hidden/);
     assert.match(layout, /pb-20 md:pb-0/);

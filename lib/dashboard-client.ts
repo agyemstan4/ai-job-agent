@@ -207,3 +207,87 @@ export function progressGroups(byStatus: Partial<Record<string, number>>): { key
     { key: "offer", label: "Offers", count: sum("offer"), tone: "green" as Tone },
   ].filter((g) => g.count > 0);
 }
+
+// ── Guidance helpers (usability pass): built only from loaded data ──
+
+/** "85% · Excellent match" style label text (never colour alone). */
+export function matchQuality(score: number | null, strong = 70): string {
+  const { label } = scoreBadge(score, strong);
+  return score === null ? label : `${label} match`;
+}
+
+export type NextStep = {
+  title: string;
+  detail: string | null;
+  action: { label: string; href: string };
+};
+
+type StepInput = {
+  hasProfile: boolean;
+  matches: number;
+  /** Strong matches not yet acted on. */
+  strongToExplore: number;
+  needsReview: number;
+  readyToApply: number;
+  preparing: number;
+  applied: number;
+  awaitingResponse: number;
+};
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** The one most useful next action for the user, in plain language. */
+export function nextStep(input: StepInput): NextStep {
+  const working = input.preparing > 0 ? `Your agent is preparing ${plural(input.preparing, "application", "applications")} in the background.` : null;
+  if (!input.hasProfile) {
+    return { title: "Upload your CV to get started.", detail: "Your agent uses it to find and rank jobs that fit you.", action: { label: "Upload CV", href: "/#search" } };
+  }
+  if (input.needsReview > 0) {
+    return {
+      title: `${plural(input.needsReview, "application is", "applications are")} ready for your review.`,
+      detail: working ?? "Check each one, then apply yourself when you're happy.",
+      action: { label: "Review applications", href: "/review" },
+    };
+  }
+  if (input.readyToApply > 0) {
+    return {
+      title: `${plural(input.readyToApply, "application is", "applications are")} approved and ready to send.`,
+      detail: "Open the job and apply on the employer's site, then mark it as applied.",
+      action: { label: "Open applications", href: "/applications" },
+    };
+  }
+  if (input.matches === 0) {
+    return { title: "Find jobs that match you.", detail: working ?? "Your agent searches several job sites and ranks every job against your CV.", action: { label: "Find jobs", href: "/#search" } };
+  }
+  if (input.strongToExplore > 0) {
+    return {
+      title: `You have ${plural(input.strongToExplore, "strong match", "strong matches")} to explore.`,
+      detail: working ?? "Prepare an application for the ones you like — your agent does the writing.",
+      action: { label: "See my matches", href: "/#jobs" },
+    };
+  }
+  if (input.applied > 0) {
+    return {
+      title: "You're up to date.",
+      detail: `You've applied to ${plural(input.applied, "job", "jobs")}.${input.awaitingResponse > 0 ? ` ${plural(input.awaitingResponse, "is", "are")} still waiting for a response.` : ""}`,
+      action: { label: "View applications", href: "/applications" },
+    };
+  }
+  return { title: "Explore your matches.", detail: working ?? "Prepare an application for any job you like.", action: { label: "See my matches", href: "/#jobs" } };
+}
+
+/** One sentence about what the agent did since the last visit, or null when nothing (never invented). */
+export function awayMessage(input: { newMatches: number; newStrong: number; finished: number; processing: number; attention: number }): string | null {
+  const found = input.newMatches > 0
+    ? `found ${plural(input.newMatches, "new match", "new matches")}${input.newStrong > 0 ? ` (${input.newStrong} strong)` : ""}`
+    : null;
+  const prepared = input.finished > 0 ? `prepared ${plural(input.finished, "application", "applications")}` : null;
+  const parts = [found, prepared].filter(Boolean);
+  const extra = [
+    input.processing > 0 ? `${input.processing} still in progress` : null,
+    input.attention > 0 ? `${input.attention} ${input.attention === 1 ? "needs" : "need"} your attention` : null,
+  ].filter(Boolean);
+  if (parts.length === 0 && extra.length === 0) return null;
+  const main = parts.length ? `Your agent ${parts.join(" and ")}.` : "";
+  return [main, extra.length ? `${extra.join(", ")}.`.replace(/^./, (c) => c.toUpperCase()) : ""].filter(Boolean).join(" ");
+}
