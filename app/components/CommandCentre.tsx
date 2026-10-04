@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Dashboard, DashboardMatch } from "@/lib/pipeline/dashboard";
 import {
@@ -13,7 +13,6 @@ import {
   newSinceLastVisit,
   pickFeatured,
   progressGroups,
-  requestPreparation,
   scoreBadge,
   sourceLabel,
   statusInfo,
@@ -21,10 +20,24 @@ import {
   workArrangement,
 } from "@/lib/dashboard-client";
 import type { FeedView, LoadResult, MatchAction, Tone } from "@/lib/dashboard-client";
+import type { PreparationItem, PreparationStatus } from "@/lib/pipeline/preparation-queue";
+import {
+  hasActiveWork,
+  loadPreparationStatus,
+  needsAttention,
+  nextPollDelay,
+  progressLine,
+  queuePreparation,
+  queuePreparations,
+  stepsFor,
+  whileYouWereAway,
+} from "@/lib/preparation-client";
 
 // The Command Centre (Phase 3 checkpoint 3c, v2 visual pass): your job hunt,
-// built only from existing data. "Prepare Application" prepares ONE job on the
-// server (a draft for your review — nothing is approved, submitted or sent).
+// built only from existing data. "Prepare Application" (or several selected
+// jobs) adds jobs to the server's preparation queue and returns at once; the
+// agent prepares them in the background, even if this page is closed. Each
+// package is a draft for your review — nothing is approved, submitted or sent.
 // "View Job" only opens the job advert in a new tab.
 
 const LAST_VISIT_KEY = "jobAgent.lastVisit";
@@ -78,18 +91,24 @@ function ScoreRing({ score, size = 76 }: { score: number | null; size?: number }
 }
 
 /** The next action for a match, always exactly one primary button. */
-function PrimaryAction({ action, onPrepare, disabled, block }: { action: MatchAction; onPrepare: () => void; disabled: boolean; block?: boolean }) {
+type CardAction = MatchAction | "queued";
+
+function PrimaryAction({ action, onPrepare, disabled, block, stage }: { action: CardAction; onPrepare: () => void; disabled: boolean; block?: boolean; stage?: string | null }) {
   const base = `inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold transition ${block ? "w-full" : ""}`;
   switch (action) {
     case "prepare":
       return (
-        <button onClick={onPrepare} disabled={disabled} title={disabled ? "One preparation at a time" : undefined} className={`${base} bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50`}>
+        <button onClick={onPrepare} disabled={disabled} className={`${base} bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50`}>
           Prepare Application
         </button>
       );
+    case "queued":
+      return (
+        <span className={`${base} cursor-default bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-300`}>Queued</span>
+      );
     case "preparing":
       return (
-        <span className={`${base} cursor-default bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20`}>
+        <span className={`${base} cursor-default bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20`} title={stage ?? undefined}>
           <span className="mr-2 h-2 w-2 animate-pulse rounded-full bg-sky-500" />Preparing…
         </span>
       );
@@ -153,7 +172,10 @@ export default function CommandCentre() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [preparingId, setPreparingId] = useState<number | null>(null);
+  const [prep, setPrep] = useState<PreparationStatus | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const polls = useRef(0);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [view, setView] = useState<FeedView>("all");
   const [query, setQuery] = useState("");
@@ -172,8 +194,9 @@ export default function CommandCentre() {
 
   useEffect(() => {
     let cancelled = false;
-    loadDashboard().then((result) => {
+    Promise.all([loadDashboard(), loadPreparationStatus()]).then(([result, prepResult]) => {
       if (cancelled) return;
+      if (prepResult.kind === "loaded") setPrep(prepResult.status);
       // The previous visit (this browser only), then record this one.
       let previous: number | null = null;
       try {
@@ -197,20 +220,81 @@ export default function CommandCentre() {
     apply(await loadDashboard());
   }
 
-  async function prepare(match: DashboardMatch) {
-    setPreparingId(match.matchId);
-    setNotice({ kind: "info", matchId: match.matchId, text: "Your agent is tailoring your CV, building the PDF and writing a cover letter. This takes a few minutes — keep this tab open." });
-    const result = await requestPreparation(match.matchId);
-    if (result.kind === "prepared") {
-      setNotice({ kind: "success", matchId: match.matchId, text: `Your application is ready for review.${result.warnings.length ? ` Note: ${result.warnings.join("; ")}` : ""}` });
-    } else if (result.kind === "exists") {
-      setNotice({ kind: "info", matchId: match.matchId, text: "This job already has an application — nothing was prepared again." });
-    } else {
-      setNotice({ kind: "error", matchId: match.matchId, text: result.message });
+  const refreshQueue = useCallback(async () => {
+    const result = await loadPreparationStatus();
+    if (result.kind !== "loaded") return null;
+    setPrep((previous) => {
+      // A job finished: refresh the job cards once (not the whole page).
+      const finishedNow = result.status.items.some((item) => {
+        const before = previous?.items.find((p) => p.applicationId === item.applicationId);
+        return before && before.state !== item.state && (item.state === "ready" || item.state === "failed");
+      });
+      if (finishedNow) loadDashboard().then(apply);
+      return result.status;
+    });
+    return result.status;
+  }, []);
+
+  // Poll while anything is preparing or queued; stop when nothing remains.
+  useEffect(() => {
+    const delay = nextPollDelay(prep, polls.current);
+    if (delay === null) {
+      polls.current = 0;
+      return;
     }
-    setPreparingId(null);
+    const timer = setTimeout(() => {
+      polls.current += 1;
+      refreshQueue();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [prep, refreshQueue]);
+
+  async function afterQueueing() {
+    polls.current = 0;
+    await refreshQueue();
     apply(await loadDashboard());
   }
+
+  async function prepare(match: DashboardMatch, retry = false) {
+    const result = await queuePreparation(match.matchId, { retry });
+    if (result.kind === "error") {
+      setNotice({ kind: "error", matchId: match.matchId, text: result.message });
+    } else if (result.kind === "existing" && !["queued", "preparing"].includes(result.state)) {
+      setNotice({ kind: "info", matchId: match.matchId, text: "This job already has an application — nothing was prepared again." });
+    } else {
+      setNotice({ kind: "info", matchId: match.matchId, text: "Added to your preparation queue. Your agent keeps working in the background — you can leave this page." });
+    }
+    await afterQueueing();
+  }
+
+  async function prepareSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBatchBusy(true);
+    const result = await queuePreparations(ids);
+    setBatchBusy(false);
+    if (result.kind === "error") {
+      setError(result.message);
+      return;
+    }
+    setSelected(new Set());
+    await afterQueueing();
+  }
+
+  async function retry(item: PreparationItem) {
+    if (item.matchId === null) return;
+    const result = await queuePreparation(item.matchId, { retry: true });
+    if (result.kind === "error") setError(result.message);
+    await afterQueueing();
+  }
+
+  const toggle = (matchId: number) =>
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(matchId)) next.delete(matchId);
+      else next.add(matchId);
+      return next;
+    });
 
   const matches = useMemo(() => dashboard?.topMatches ?? [], [dashboard]);
   const featured = useMemo(() => pickFeatured(matches), [matches]);
@@ -219,7 +303,15 @@ export default function CommandCentre() {
     [matches, featured, view, query, dashboard]
   );
   const fresh = useMemo(() => newSinceLastVisit(matches, lastVisit), [matches, lastVisit]);
-  const actionOf = (m: DashboardMatch): MatchAction => (preparingId === m.matchId ? "preparing" : actionFor(m));
+  const prepByApp = useMemo(() => new Map((prep?.items ?? []).map((i) => [i.applicationId, i])), [prep]);
+  const prepItemOf = (m: DashboardMatch) => (m.application ? prepByApp.get(m.application.id) ?? null : null);
+  const actionOf = (m: DashboardMatch): CardAction => {
+    const item = prepItemOf(m);
+    if (item?.state === "queued") return "queued";
+    if (item?.state === "preparing") return "preparing";
+    return actionFor(m);
+  };
+  const away = useMemo(() => whileYouWereAway(prep, lastVisit), [prep, lastVisit]);
 
   const stats = dashboard?.stats;
   const progress = stats ? progressGroups(stats.applicationsByStatus) : [];
@@ -319,6 +411,20 @@ export default function CommandCentre() {
             </div>
           )}
 
+          {/* ── While you were away (only when something finished since the last visit) ── */}
+          {away && (
+            <div className="mt-6 rounded-xl bg-indigo-50/70 px-4 py-3 ring-1 ring-inset ring-indigo-200" role="status">
+              <p className="text-sm font-semibold text-indigo-900">While you were away</p>
+              <p className="mt-0.5 text-sm text-indigo-800">
+                {away.finished > 0 && <>{away.finished} {away.finished === 1 ? "application" : "applications"} finished preparing. </>}
+                {away.processing > 0 && <>{away.processing} still processing. </>}
+                {away.attention > 0 && <>{away.attention} {away.attention === 1 ? "needs" : "need"} attention.</>}
+              </p>
+            </div>
+          )}
+
+          {prep && prep.items.length > 0 && <PreparationPanel status={prep} onRetry={retry} />}
+
           {/* ── Featured opportunity ─────────────────────────────────────── */}
           <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide text-slate-500">Recommended for you</h2>
           {!dashboard.hasProfile ? (
@@ -338,7 +444,7 @@ export default function CommandCentre() {
               action={actionOf(featured)}
               strong={dashboard.strongMatchScore}
               onPrepare={() => prepare(featured)}
-              busyElsewhere={preparingId !== null && preparingId !== featured.matchId}
+              prepItem={prepItemOf(featured)}
               notice={notice?.matchId === featured.matchId ? notice : null}
             />
           ) : (
@@ -401,12 +507,25 @@ export default function CommandCentre() {
                       action={actionOf(match)}
                       strong={dashboard.strongMatchScore}
                       onPrepare={() => prepare(match)}
-                      busyElsewhere={preparingId !== null && preparingId !== match.matchId}
+                      prepItem={prepItemOf(match)}
+                      selected={selected.has(match.matchId)}
+                      onToggle={() => toggle(match.matchId)}
                       notice={notice?.matchId === match.matchId ? notice : null}
                     />
                   ))}
                 </ul>
               )}
+            </div>
+          )}
+          {selected.size > 0 && (
+            <div className="sticky bottom-20 z-30 mt-4 flex items-center justify-between gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-lg md:bottom-4">
+              <p className="text-sm"><span className="font-semibold">{selected.size}</span> selected</p>
+              <div className="flex gap-2">
+                <button onClick={() => setSelected(new Set())} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:text-white">Clear</button>
+                <button onClick={prepareSelected} disabled={batchBusy} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-60">
+                  {batchBusy ? "Adding…" : `Prepare ${selected.size === 1 ? "selected application" : "selected applications"}`}
+                </button>
+              </div>
             </div>
           )}
         </>
@@ -417,14 +536,16 @@ export default function CommandCentre() {
 
 type CardProps = {
   match: DashboardMatch;
-  action: MatchAction;
+  action: CardAction;
   strong: number;
   onPrepare: () => void;
-  busyElsewhere: boolean;
   notice: Notice | null;
+  prepItem: PreparationItem | null;
+  selected?: boolean;
+  onToggle?: () => void;
 };
 
-function FeaturedCard({ match, action, strong, onPrepare, busyElsewhere, notice }: CardProps) {
+function FeaturedCard({ match, action, strong, onPrepare, notice, prepItem }: CardProps) {
   const badge = scoreBadge(match.score, strong);
   const salary = formatSalary(match.salaryMin, match.salaryMax, match.salaryIsPredicted);
   const arrangement = workArrangement(match.contractTime, match.contractType);
@@ -497,8 +618,15 @@ function FeaturedCard({ match, action, strong, onPrepare, busyElsewhere, notice 
           )}
         </div>
 
+        {prepItem && (prepItem.state === "preparing" || prepItem.state === "queued") && (
+          <div className="mt-6 rounded-xl bg-sky-50/60 p-4 ring-1 ring-inset ring-sky-100">
+            <p className="text-sm font-semibold text-slate-900">{prepItem.state === "queued" ? "Queued for preparation" : "Preparing application"}</p>
+            <Steps item={prepItem} />
+          </div>
+        )}
+
         <div className="mt-6 flex flex-col gap-2 sm:flex-row">
-          <PrimaryAction action={action} onPrepare={onPrepare} disabled={busyElsewhere} block />
+          <PrimaryAction action={action} onPrepare={onPrepare} disabled={false} block stage={prepItem?.currentStage} />
           <ViewJob url={match.url} block />
         </div>
         <NoticeLine notice={notice} />
@@ -507,13 +635,18 @@ function FeaturedCard({ match, action, strong, onPrepare, busyElsewhere, notice 
   );
 }
 
-function FeedRow({ match, action, strong, onPrepare, busyElsewhere, notice }: CardProps) {
+function FeedRow({ match, action, strong, onPrepare, notice, prepItem, selected, onToggle }: CardProps) {
   const salary = formatSalary(match.salaryMin, match.salaryMax, match.salaryIsPredicted);
   const status = statusInfo(match.application?.status);
   const isStrong = match.score !== null && match.score >= strong;
   return (
     <li className="p-4 sm:px-5">
       <div className="flex items-start gap-3 sm:items-center sm:gap-4">
+        {action === "prepare" && onToggle ? (
+          <input type="checkbox" checked={Boolean(selected)} onChange={onToggle} aria-label={`Select ${match.title}`} className="mt-4 h-4 w-4 shrink-0 accent-indigo-600 sm:mt-0" />
+        ) : (
+          <span className="w-4 shrink-0" aria-hidden="true" />
+        )}
         <ScoreRing score={match.score} size={48} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -526,6 +659,9 @@ function FeedRow({ match, action, strong, onPrepare, busyElsewhere, notice }: Ca
             {match.location && <> · {match.location}</>}
             {salary && <> · <span className="text-slate-700">{salary}</span></>}
           </p>
+          {prepItem && (prepItem.state === "preparing" || prepItem.state === "queued") && (
+            <p className="mt-1 text-xs font-medium text-sky-700">{progressLine(prepItem)}</p>
+          )}
           {match.strengths.length > 0 && (
             <div className="mt-2 hidden flex-wrap gap-1.5 sm:flex">
               {match.strengths.slice(0, 3).map((s) => (
@@ -540,15 +676,87 @@ function FeedRow({ match, action, strong, onPrepare, busyElsewhere, notice }: Ca
               View Job ↗
             </a>
           )}
-          <PrimaryAction action={action} onPrepare={onPrepare} disabled={busyElsewhere} />
+          <PrimaryAction action={action} onPrepare={onPrepare} disabled={false} stage={prepItem?.currentStage} />
         </div>
       </div>
       {/* Mobile: actions on their own row */}
       <div className="mt-3 flex gap-2 sm:hidden">
         <ViewJob url={match.url} />
-        <div className="flex-1"><PrimaryAction action={action} onPrepare={onPrepare} disabled={busyElsewhere} block /></div>
+        <div className="flex-1"><PrimaryAction action={action} onPrepare={onPrepare} disabled={false} block stage={prepItem?.currentStage} /></div>
       </div>
       <NoticeLine notice={notice} />
     </li>
+  );
+}
+
+const STEP_ICON: Record<string, { icon: string; className: string }> = {
+  done: { icon: "✓", className: "text-emerald-600" },
+  running: { icon: "●", className: "animate-pulse text-sky-500" },
+  pending: { icon: "○", className: "text-slate-300" },
+  failed: { icon: "✕", className: "text-rose-600" },
+};
+
+function Steps({ item }: { item: PreparationItem }) {
+  return (
+    <ol className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+      {stepsFor(item).map((step) => (
+        <li key={step.label} className={`flex items-center gap-2 ${step.state === "pending" ? "text-slate-400" : "text-slate-700"}`}>
+          <span className={`w-4 text-center ${STEP_ICON[step.state]?.className ?? ""}`} aria-hidden="true">{STEP_ICON[step.state]?.icon ?? "○"}</span>
+          {step.label}
+          <span className="sr-only">({step.state})</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The live preparation queue: counts and each job's progress. */
+function PreparationPanel({ status, onRetry }: { status: PreparationStatus; onRetry: (item: PreparationItem) => void }) {
+  const { summary } = status;
+  const active = hasActiveWork(status);
+  const items = [...status.items].sort((a, b) => {
+    const order: Record<string, number> = { preparing: 0, queued: 1, failed: 2, ready: 3 };
+    return (order[a.state] ?? 9) - (order[b.state] ?? 9) || a.applicationId - b.applicationId;
+  });
+  return (
+    <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 sm:p-5" aria-label="Application preparation">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Application preparation</h2>
+          <p className="text-sm text-slate-500">
+            {active ? "Your applications are being prepared. Your agent keeps working even if you leave this page." : "Your agent has finished preparing."}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {summary.preparing > 0 && <Pill tone="blue">{summary.preparing} preparing</Pill>}
+          {summary.queued > 0 && <Pill tone="gray">{summary.queued} queued</Pill>}
+          {summary.ready > 0 && <Pill tone="violet">{summary.ready} ready for review</Pill>}
+          {summary.failed > 0 && <Pill tone="red">{summary.failed} failed</Pill>}
+        </div>
+      </div>
+      <ul className="mt-3 divide-y divide-slate-100">
+        {items.slice(0, 8).map((item) => (
+          <li key={item.applicationId} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-900">{item.title} <span className="font-normal text-slate-500">· {item.company}</span></p>
+              <p className={`text-sm ${needsAttention(item) ? "text-rose-700" : item.state === "ready" ? "text-emerald-700" : "text-slate-600"}`}>
+                {item.state === "ready" && !item.error ? "✓ " : item.state === "failed" ? "✕ " : item.state === "preparing" ? "● " : ""}
+                {progressLine(item)}
+              </p>
+              {item.state === "preparing" && <Steps item={item} />}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {needsAttention(item) && item.matchId !== null && (
+                <button onClick={() => onRetry(item)} className="rounded-lg px-3 py-1.5 text-sm font-semibold text-rose-700 ring-1 ring-inset ring-rose-300 hover:bg-rose-50">Retry</button>
+              )}
+              {item.state === "ready" && (
+                <Link href="/review" className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-500">Review Application</Link>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {items.length > 8 && <p className="pt-2 text-xs text-slate-500">+{items.length - 8} more</p>}
+    </section>
   );
 }

@@ -120,7 +120,7 @@ describe("3a: logs carry no personal or application content", () => {
 describe("3a: explicit model and prompt versions for preparation", () => {
   test("the constants are defined", () => {
     assert.equal(GENERATION_MODEL, "llama3.2:3b");
-    assert.equal(TAILOR_CV_PROMPT_VERSION, "tailor-cv/v1");
+    assert.equal(TAILOR_CV_PROMPT_VERSION, "tailor-cv/v2"); // v2 since 3d
     assert.equal(COVER_LETTER_PROMPT_VERSION, "cover-letter/v1");
     assert.equal(APPLICATION_QUESTIONS_PROMPT_VERSION, "application-questions/v1");
   });

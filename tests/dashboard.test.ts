@@ -373,7 +373,8 @@ describe("3c v2: Command Centre, navigation and home page (source checks)", () =
 
   test("greeting, agent status, discovery control, featured opportunity, feed: from loaded data", () => {
     assert.ok(component.startsWith('"use client";'));
-    assert.match(component, /useEffect\(\(\) => \{\s*let cancelled = false;\s*loadDashboard\(\)\.then/);
+    // Since 3d the first load also reads the preparation queue.
+    assert.match(component, /useEffect\(\(\) => \{\s*let cancelled = false;\s*Promise\.all\(\[loadDashboard\(\), loadPreparationStatus\(\)\]\)\.then/);
     for (const text of ["Let&rsquo;s find your next move.", "Find new jobs", "Edit preferences", "Recommended for you", "Why this job fits you", "Your advantage", "Potential gap", "How you match", "Your opportunities", "Your progress", "New since your last visit", "Strong matches today", "Waiting for your review", "Ready to apply", "Try again", "No CV profile yet", "No scored matches yet"]) {
       assert.ok(component.includes(text), text);
     }
@@ -389,14 +390,16 @@ describe("3c v2: Command Centre, navigation and home page (source checks)", () =
     assert.match(component, /window\.localStorage\.getItem\(LAST_VISIT_KEY\)/);
   });
 
-  test("actions: one next action per job; Prepare one at a time; Review/Track link to existing pages; View Job opens a new tab", () => {
+  test("actions: one next action per job; Prepare queues (never blocks other jobs); Review/Track link to existing pages; View Job opens a new tab", () => {
     assert.match(component, /case "prepare":[\s\S]*onClick=\{onPrepare\} disabled=\{disabled\}/);
+    assert.match(component, /case "queued":/);
     assert.match(component, /case "review":\s*return <Link href="\/review"[^>]*>Review Application<\/Link>/);
     assert.match(component, /case "apply":\s*return <Link href="\/applications"/);
     assert.match(component, /case "track":\s*return <Link href="\/applications"[^>]*>Track<\/Link>/);
-    assert.match(component, /busyElsewhere=\{preparingId !== null && preparingId !== match\.matchId\}/);
+    // Since 3d other jobs' Prepare buttons stay enabled: the server queue bounds the work.
+    assert.equal(component.includes("busyElsewhere"), false);
     assert.match(component, /href=\{url\} target="_blank" rel="noopener noreferrer"/);
-    assert.match(component, /await requestPreparation\(match\.matchId\)/);
+    assert.match(component, /await queuePreparation\(match\.matchId, \{ retry \}\)/);
   });
 
   test("navigation: existing routes only, top bar on desktop, bottom tab bar on mobile, in the layout", () => {

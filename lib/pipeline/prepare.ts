@@ -19,6 +19,7 @@ import {
 } from "../generation/versions.ts";
 import { boundDescription } from "./match-scoring.ts";
 import { startRunIfFree } from "./runs.ts";
+import { queueState } from "./preparation-registry.ts";
 
 // Phase 3 checkpoint 3c: server-side preparation of ONE scored match.
 //
@@ -42,7 +43,7 @@ export const MAX_QUESTIONS = 10;
 export const MAX_QUESTION_CHARS = 500;
 
 export type PrepareJob = { title: string; company: string; location: string | null; description: string };
-export type CvFile = { buffer: Buffer; filename: string; format: "pdf" | "docx"; mimeType: string };
+export type CvFile = { buffer: Buffer; filename: string; format: "pdf" | "docx"; mimeType: string; timings?: { docxMs: number; pdfMs: number } };
 
 /** The generation steps (lib/generation in production; fakes in tests). */
 export type PrepareDeps = {
@@ -167,6 +168,10 @@ export async function prepareApplication(
   const sourceJobDescriptionId = description?.id ?? null;
   const warnings: string[] = [];
   const id = application.id;
+  // Hold this application in the shared registry so queue workers never generate it too.
+  const registry = queueState();
+  registry.active.set(id, { applicationId: id, startedAt: Date.now(), stages: {}, errors: {} });
+  try {
 
   try {
     const tailoredCv = await deps.tailorCv(cv, prepareJob);
@@ -220,6 +225,9 @@ export async function prepareApplication(
   });
   if (runId !== null) completeRun(db, runId, { applicationId: id, warnings: warnings.length });
   return { status: 201, body: { applicationId: id, applicationStatus: ready.status, alreadyPrepared: false, warnings } };
+  } finally {
+    registry.active.delete(id);
+  }
 }
 
 /** The production generation steps (lib/generation), loaded only when used. */

@@ -241,15 +241,24 @@ function buildCV(cv: any) {
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
-export type CvDocumentFile = { buffer: Buffer; filename: string; format: "pdf" | "docx"; mimeType: string };
+export type CvDocumentFile = {
+  buffer: Buffer;
+  filename: string;
+  format: "pdf" | "docx";
+  mimeType: string;
+  /** Milliseconds spent building the DOCX and converting it to PDF (for performance logging). */
+  timings?: { docxMs: number; pdfMs: number };
+};
 
 export const PDF_MIME = "application/pdf";
 export const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /** Builds the DOCX and converts it to PDF; falls back to the DOCX if LibreOffice fails. */
 export async function renderCvDocument(tailoredCV: any, job: any): Promise<CvDocumentFile> {
+    const docxStart = Date.now();
     const doc = buildCV(tailoredCV);
     const docxBuffer = await Packer.toBuffer(doc);
+    const docxMs = Date.now() - docxStart;
     const jobCompany = job?.company || "Company";
 
     // Convert to PDF via LibreOffice
@@ -258,6 +267,7 @@ export async function renderCvDocument(tailoredCV: any, job: any): Promise<CvDoc
 
     await writeFile(tmpDocx, docxBuffer);
 
+    const pdfStart = Date.now();
     try {
       await execAsync(
   `"C:\\Program Files\\LibreOffice\\program\\soffice.exe" --headless --convert-to pdf --outdir "${tmpdir()}" "${tmpDocx}"`
@@ -266,7 +276,7 @@ export async function renderCvDocument(tailoredCV: any, job: any): Promise<CvDoc
       console.error("LibreOffice conversion failed:", e);
       // Fall back to the DOCX if LibreOffice fails
       await unlink(tmpDocx).catch(() => {});
-      return { buffer: docxBuffer, filename: buildFileName(tailoredCV.name, jobCompany, "docx"), format: "docx", mimeType: DOCX_MIME };
+      return { buffer: docxBuffer, filename: buildFileName(tailoredCV.name, jobCompany, "docx"), format: "docx", mimeType: DOCX_MIME, timings: { docxMs, pdfMs: Date.now() - pdfStart } };
     }
 
     const pdfBuffer = await readFile(tmpPdf);
@@ -277,6 +287,6 @@ export async function renderCvDocument(tailoredCV: any, job: any): Promise<CvDoc
       unlink(tmpPdf).catch(() => {}),
     ]);
 
-    return { buffer: pdfBuffer, filename: buildFileName(tailoredCV.name, jobCompany, "pdf"), format: "pdf", mimeType: PDF_MIME };
+    return { buffer: pdfBuffer, filename: buildFileName(tailoredCV.name, jobCompany, "pdf"), format: "pdf", mimeType: PDF_MIME, timings: { docxMs, pdfMs: Date.now() - pdfStart } };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -97,7 +97,7 @@ describe("3c: prepareApplication — the package", () => {
     const id = (await prepareApplication(t.db, { matchId }, deps)).body.applicationId!;
     const assets = Object.fromEntries(getCurrentAssets(t.db, id).map((a) => [a.kind, a]));
     assert.equal(assets.tailored_cv_data.model, "llama3.2:3b");
-    assert.equal(assets.tailored_cv_data.promptVersion, "tailor-cv/v1");
+    assert.equal(assets.tailored_cv_data.promptVersion, "tailor-cv/v2");
     assert.equal(assets.cover_letter.promptVersion, "cover-letter/v1");
     assert.ok(assets.tailored_cv_data.sourceJobDescriptionId);
     assert.equal(assets.tailored_cv_file.filename, "Test_Candidate_Acme_CV.pdf");
@@ -319,9 +319,10 @@ describe("3c: wiring and safety (source checks)", () => {
   const route = read("app/api/applications/prepare/route.ts");
   const prepare = read("lib/pipeline/prepare.ts");
 
-  test("the route is thin: it calls prepareApplication with the production steps", () => {
+  test("the route is thin: since 3d it queues the job (bounded workers) with the production steps", () => {
     assert.match(route, /export async function POST\(req: NextRequest\)/);
-    assert.match(route, /await prepareApplication\(db, body \?\? \{\}, await defaultPrepareDeps\(\)\)/);
+    assert.match(route, /const deps = await defaultPrepareDeps\(\);/);
+    assert.match(route, /enqueuePreparation\(db, body\)/);
     assert.equal(/export async function (GET|PUT|PATCH|DELETE)/.test(route), false);
   });
 
