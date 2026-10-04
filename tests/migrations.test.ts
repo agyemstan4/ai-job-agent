@@ -498,7 +498,7 @@ describe("v5 → v6 upgrade (migration 006)", () => {
   test("a fresh database reaches v6 with both triggers and the correct checksum", () => {
     const t = quietly(freshDb);
     try {
-      assert.equal(version(t.db), 6);
+      assert.ok(version(t.db) >= 6, "a fresh database includes v6 (later migrations may follow)");
       for (const trigger of TRIGGERS_006) assert.ok(names(t.db).has(trigger), trigger);
       const row = t.db.prepare("SELECT name, checksum FROM schema_migrations WHERE version = 6").get() as { name: string; checksum: string };
       const m = MIGRATIONS[5];
@@ -520,7 +520,7 @@ describe("v5 → v6 upgrade (migration 006)", () => {
       const before = print(db);
       const triggersBefore = names(db);
 
-      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") }));
+      const result = quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups"), migrations: MIGRATIONS.slice(0, 6) }));
       assert.deepEqual(result.applied, [6]);
       assert.deepEqual([result.fromVersion, result.toVersion], [5, 6]);
       assert.deepEqual(result.checksumWarnings, []);
@@ -548,7 +548,7 @@ describe("v5 → v6 upgrade (migration 006)", () => {
         /ASSETS_LOCKED: application content cannot change after the application has been submitted/
       );
       assert.deepEqual(print(db), before);
-      assert.deepEqual(quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups") })).applied, []);
+      assert.deepEqual(quietly(() => runMigrations(db, { backupDir: path.join(dir, "backups"), migrations: MIGRATIONS.slice(0, 6) })).applied, []);
     } finally {
       db.close();
       removeTempDir(dir);

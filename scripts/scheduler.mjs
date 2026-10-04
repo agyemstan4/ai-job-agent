@@ -1,144 +1,44 @@
-const BASE_URL = "http://localhost:3000";
+// The daily career agent trigger (Phase 4b).
+//
+// Run once a day (06:30, Windows Task Scheduler — see
+// scripts/register-daily-task.ps1) while the Job Agent server is running.
+// It asks the server to run the daily agent and exits: no long-running
+// process. The server uses your stored CV profile and saved search
+// preferences, finds and matches new jobs with the existing pipeline and
+// saves today's brief for the Today page. It never prepares, approves or
+// submits applications, and sends no email or notifications.
+//
+// Repeated or overlapping runs are safe: a second run the same day does
+// nothing ("already_ready"), and one started while another is in progress
+// stops at once ("already_running").
+//
+// Replaces the earlier script, which sent a hard-coded CV summary without a
+// profile: its scores were never saved, yet the jobs were marked as seen, so
+// they were hidden from your real profile.
 
-const candidate = {
-  name: "Stanley Sarfo Peprah",
+const BASE_URL = process.env.JOB_AGENT_URL ?? "http://127.0.0.1:3000";
 
-  summary:
-    "First-Class Honours Software Engineering graduate with practical experience across Kotlin, Java, JavaScript, Firebase, Jetpack Compose and web development. Built VibeNSync as a final-year Android application using Kotlin, Jetpack Compose, Firebase and the Spotify Web API. Also developed a Personal Portfolio Website and other university software projects. Experienced in applying software engineering principles through academic and personal projects.",
-
-  experienceLevel: "Graduate / Junior",
-
-  technicalSkills: [
-    "Kotlin",
-    "Java",
-    "JavaScript",
-    "HTML",
-    "CSS",
-    "SQL",
-    "Android Studio",
-    "Jetpack Compose",
-    "Material Design",
-    "MVVM",
-    "Firebase",
-    "Firebase Firestore",
-    "Firebase Authentication",
-    "Spotify Web API",
-  ],
-
-  matchingSkills: [
-    "Kotlin",
-    "Java",
-    "JavaScript",
-    "Android Studio",
-    "Jetpack Compose",
-    "Firebase",
-    "SQL",
-  ],
-
-  missingSkills: [],
-
-  strengths: [
-    "First-Class Honours Software Engineering degree",
-    "Multiple software engineering projects",
-    "Android development with Kotlin and Jetpack Compose",
-  ],
-
-  growthAreas: [
-    "Commercial software engineering experience",
-    "Broader backend technologies",
-  ],
-};
-
-async function run() {
-  console.log("\n========================================");
-  console.log("🤖 AI JOB AGENT SCHEDULER");
-  console.log("========================================\n");
-
-  // -----------------------------------------
-  // 1. FETCH NEW JOBS
-  // -----------------------------------------
-
-  console.log("🔎 Fetching new jobs...");
-
-  const jobsResponse = await fetch(`${BASE_URL}/api/jobs`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      role: "junior software engineer",
-      location: "London",
-    }),
-  });
-
-  if (!jobsResponse.ok) {
-    throw new Error(
-      `Job API failed: ${jobsResponse.status} ${await jobsResponse.text()}`
-    );
+async function main() {
+  const startedAt = new Date();
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}/api/agent/daily-run`, { method: "POST" });
+  } catch {
+    console.error(`[${startedAt.toISOString()}] Job Agent is not running at ${BASE_URL} — start it, then try again.`);
+    process.exit(2);
   }
-
-  const jobs = await jobsResponse.json();
-
-  console.log(`✅ New jobs found: ${jobs.length}`);
-
-  if (!jobs.length) {
-    console.log("\nℹ️ No new jobs to process.");
-    return;
-  }
-
-  // -----------------------------------------
-  // 2. MATCH JOBS
-  // -----------------------------------------
-
-  console.log("\n🧠 Sending jobs to matching engine...");
-
-  const matchResponse = await fetch(`${BASE_URL}/api/match`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      candidate,
-      jobs,
-    }),
-  });
-
-  if (!matchResponse.ok) {
-    throw new Error(
-      `Match API failed: ${matchResponse.status} ${await matchResponse.text()}`
-    );
-  }
-
-  const matchData = await matchResponse.json();
-
-  const matches = matchData.matches || [];
-
-  console.log(`\n✅ Matching complete: ${matches.length} matches\n`);
-
-  // -----------------------------------------
-  // 3. DISPLAY RESULTS
-  // -----------------------------------------
-
-  console.log("========================================");
-  console.log("🔥 JOB MATCHES");
-  console.log("========================================");
-
-  matches.forEach((job, index) => {
-    console.log(`\n${index + 1}. ${job.title}`);
-    console.log(`   Company: ${job.company}`);
-    console.log(`   Location: ${job.location}`);
-    console.log(`   Match: ${job.matchScore}%`);
-    console.log(`   Reason: ${job.reason}`);
-    console.log(`   URL: ${job.url}`);
-  });
-
-  console.log("\n========================================");
-  console.log("🏁 SCHEDULER RUN COMPLETE");
-  console.log("========================================\n");
+  const body = await response.json().catch(() => ({}));
+  const summary = {
+    status: body.status ?? `http_${response.status}`,
+    briefDate: body.briefDate ?? null,
+    items: body.stats?.items ?? null,
+    newInBrief: body.stats?.newInBrief ?? null,
+    discovered: body.stats?.discovered ?? null,
+    scored: body.stats?.scored ?? null,
+    warnings: Array.isArray(body.stats?.warnings) ? body.stats.warnings.length : 0,
+  };
+  console.log(`[${startedAt.toISOString()}] daily agent:`, JSON.stringify(summary));
+  process.exit(["completed", "already_ready", "already_running"].includes(summary.status) ? 0 : 1);
 }
 
-run().catch((error) => {
-  console.error("\n❌ SCHEDULER FAILED");
-  console.error(error);
-  process.exit(1);
-});
+main();

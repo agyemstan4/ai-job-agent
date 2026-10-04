@@ -192,7 +192,7 @@ describe("006 — legacy imports are unaffected", () => {
       });
       const db = quietly(() => openDatabase(file));
       opened.push(db);
-      assert.equal((db.prepare("SELECT MAX(version) v FROM schema_migrations").get() as { v: number }).v, 6);
+      assert.ok((db.prepare("SELECT MAX(version) v FROM schema_migrations").get() as { v: number }).v >= 6, "v6 or later (007 adds the daily agent tables)");
       assert.equal((db.prepare("SELECT COUNT(*) n FROM application_assets").get() as { n: number }).n, 3);
       const legacyApproved = db.prepare("SELECT id FROM applications WHERE legacy_batch_result_id = 1").get() as { id: number };
       db.prepare(

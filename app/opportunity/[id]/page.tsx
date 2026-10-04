@@ -8,6 +8,7 @@ import type { DashboardMatch } from "@/lib/pipeline/dashboard";
 import type { PreparationItem } from "@/lib/pipeline/preparation-queue";
 import { loadPreparationStatus, progressLine, queuePreparation } from "@/lib/preparation-client";
 import { markViewed } from "@/lib/daily-brief";
+import { sendOpportunityEvent } from "@/lib/agent-client";
 import {
   BenefitChips,
   OpportunityReasons,
@@ -59,6 +60,8 @@ export default function OpportunityPage() {
     Promise.all([loadDashboard(), loadPreparationStatus()]).then(([result, prep]) => {
       if (cancelled) return;
       apply(result, prep);
+      const opened = result.kind === "loaded" ? result.dashboard.topMatches.find((m) => m.matchId === matchId) : undefined;
+      if (opened) void sendOpportunityEvent(opened.jobId, "seen");
       try {
         markViewed(window.localStorage, matchId);
       } catch {
@@ -72,6 +75,7 @@ export default function OpportunityPage() {
 
   async function prepare() {
     if (!match) return;
+    void sendOpportunityEvent(match.jobId, "reviewed");
     const result = await queuePreparation(match.matchId, {});
     setMessage(
       result.kind === "error"
@@ -130,7 +134,13 @@ export default function OpportunityPage() {
             )}
 
             {/* The next step */}
-            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+            <div
+              className="mt-5 flex flex-col gap-2 sm:flex-row"
+              onClickCapture={(e) => {
+                // Opening the prepared application counts as reviewing this opportunity.
+                if ((e.target as Element).closest('a[href="/review"]')) void sendOpportunityEvent(match.jobId, "reviewed");
+              }}
+            >
               <div className="sm:flex-1"><PrimaryAction action={action} onPrepare={prepare} disabled={false} block stage={prepItem?.currentStage} /></div>
               <div className="sm:w-44"><ViewJob url={match.url} block /></div>
             </div>

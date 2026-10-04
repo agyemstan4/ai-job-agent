@@ -35,7 +35,7 @@ export const TIER_TEXT: Record<BriefTier, string> = {
   5: "Worth a look",
 };
 
-export type BriefPreparation = "not_started" | "queued" | "preparing" | "ready_for_review" | "approved" | "failed";
+export type BriefPreparation = "not_started" | "queued" | "preparing" | "ready_for_review" | "approved" | "applied" | "failed";
 
 export type BriefItem = {
   matchId: number;
@@ -89,17 +89,24 @@ export type DailyBrief = {
   lastSearchAt: string | null;
   /** What changed since your last visit, or null (first visit / nothing new). */
   away: BriefAway | null;
+  /** A saved (scheduled) brief: its id, and anything that went wrong while building it. */
+  savedBriefId?: number | null;
+  warnings?: string[];
 };
 
 const OPEN = new Set(["prepare", "preparing", "review", "apply"]);
 
-function preparationOf(match: DashboardMatch, prep: PreparationStatus | null): BriefPreparation {
+export function preparationOf(match: DashboardMatch, prep: PreparationStatus | null): BriefPreparation {
   const item = match.application ? prep?.items.find((i) => i.applicationId === match.application!.id) : undefined;
   if (item?.state === "queued") return "queued";
   if (item?.state === "preparing" || match.application?.status === "preparing") return "preparing";
   switch (match.application?.status) {
     case "ready_for_review": return "ready_for_review";
     case "approved": return "approved";
+    case "submitted":
+    case "acknowledged":
+    case "interviewing":
+    case "offer": return "applied";
     case "preparation_failed": return "failed";
     default: return "not_started";
   }
@@ -126,13 +133,20 @@ const localDate = (now: Date) => `${now.getFullYear()}-${String(now.getMonth() +
 export function buildDailyBrief(
   dashboard: Dashboard,
   prep: PreparationStatus | null,
-  options: { now?: Date; lastVisit?: number | null; viewed?: ReadonlySet<number>; origin?: DailyBrief["origin"] } = {}
+  options: {
+    now?: Date;
+    lastVisit?: number | null;
+    viewed?: ReadonlySet<number>;
+    origin?: DailyBrief["origin"];
+    /** Overrides "new" (a scheduled brief: not in any earlier brief). Default: found after the last visit. */
+    isNew?: (match: DashboardMatch) => boolean;
+  } = {}
 ): DailyBrief {
   const now = options.now ?? new Date();
   const lastVisit = options.lastVisit ?? null;
   const viewed = options.viewed ?? new Set<number>();
   const strong = dashboard.strongMatchScore;
-  const isNew = (m: DashboardMatch) => lastVisit !== null && (parseStoredTime(m.firstSeenAt) ?? 0) > lastVisit;
+  const isNew = options.isNew ?? ((m: DashboardMatch) => lastVisit !== null && (parseStoredTime(m.firstSeenAt) ?? 0) > lastVisit);
 
   const seenJobs = new Set<number>();
   const ranked = dashboard.topMatches

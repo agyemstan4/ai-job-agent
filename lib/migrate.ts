@@ -8,6 +8,7 @@ import { migration003ImportLegacyBatches } from "./migrations/003_import_legacy_
 import { migration004ApprovalGateHardening } from "./migrations/004_approval_gate_hardening.ts";
 import { migration005ManualSubmissionGuard } from "./migrations/005_manual_submission_guard.ts";
 import { migration006WithdrawnAssetLock } from "./migrations/006_withdrawn_asset_lock.ts";
+import { migration007DailyAgent } from "./migrations/007_daily_agent.ts";
 
 export type Migration = {
   version: number;
@@ -27,6 +28,7 @@ export const MIGRATIONS: readonly Migration[] = [
   migration004ApprovalGateHardening,
   migration005ManualSubmissionGuard,
   migration006WithdrawnAssetLock,
+  migration007DailyAgent,
 ];
 
 export type MigrationResult = {

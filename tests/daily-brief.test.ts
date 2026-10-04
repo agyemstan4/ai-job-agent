@@ -240,7 +240,8 @@ describe("4a: Today and the opportunity view (source checks)", () => {
   const opportunity = read("app/opportunity/[id]/page.tsx");
 
   test("Today reads the same data as Home and never searches or claims an overnight run", () => {
-    assert.match(today, /Promise\.all\(\[loadDashboard\(\), loadPreparationStatus\(\)\]\)/);
+    // Since 4b Today also reads the saved daily brief, falling back to building one now.
+    assert.match(today, /Promise\.all\(\[loadDashboard\(\), loadPreparationStatus\(\), loadSavedBrief\(\)\]\)/);
     assert.match(today, /buildDailyBrief\(result\.dashboard, prep, \{ lastVisit, viewed \}\)/);
     assert.ok(today.includes("Based on the jobs your agent has found so far"));
     assert.doesNotMatch(today, /overnight|while you slept|searched for you today/i);
@@ -270,7 +271,8 @@ describe("4a: protected systems unchanged", () => {
       "lib/pipeline/preparation-registry.ts": "1453bbb8d2fe50ec1fbb8468585413a3b0dc913ca718b0d52bc03c1783b3c23e",
       "lib/pipeline/prepare.ts": "404d944e54ce5a8d5d21e69aba22d6e5a3c3467d8882a105888957a00ac59026",
       "lib/email-copies.ts": "22126ebc9dbfba7786fd566c4b4bd418918340262628b7e73e7c6334ed3fb4a8",
-      "scripts/scheduler.mjs": "c2456d2b8435811c96621b038fe06b862ec9c61ac4544bec3aabab1de1b8e119",
+      // Replaced in 4b by the daily-agent trigger (approved); pinned again from here.
+      "scripts/scheduler.mjs": "7744d6416e00509c7b26aa471a2a7de1fd7ee95d0b8bf6ae52ef1c4f1ab3d9af",
     };
     for (const [file, hash] of Object.entries(pins)) assert.equal(h(file), hash, file);
   });

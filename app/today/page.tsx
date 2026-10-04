@@ -7,6 +7,7 @@ import type { Dashboard } from "@/lib/pipeline/dashboard";
 import type { PreparationStatus } from "@/lib/pipeline/preparation-queue";
 import { loadPreparationStatus } from "@/lib/preparation-client";
 import { awayLines, buildDailyBrief, LAST_VISIT_KEY, readViewed } from "@/lib/daily-brief";
+import { loadSavedBrief, workedWhileAway } from "@/lib/agent-client";
 import type { BriefItem, DailyBrief } from "@/lib/daily-brief";
 import {
   NOTIFICATION_SETTINGS_KEY,
@@ -154,10 +155,11 @@ export default function TodayPage() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hour, setHour] = useState<number | null>(null);
+  const [worked, setWorked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([loadDashboard(), loadPreparationStatus()]).then(([result, prepResult]) => {
+    Promise.all([loadDashboard(), loadPreparationStatus(), loadSavedBrief()]).then(([result, prepResult, saved]) => {
       if (cancelled) return;
       if (result.kind !== "loaded") {
         setError(result.message);
@@ -176,7 +178,20 @@ export default function TodayPage() {
       }
       const prep: PreparationStatus | null = prepResult.kind === "loaded" ? prepResult.status : null;
       setDashboard(result.dashboard);
-      setBrief(buildDailyBrief(result.dashboard, prep, { lastVisit, viewed }));
+      if (saved.kind === "ready") {
+        // The daily run saved a brief today: show it (with "While you were away"
+        // only if it was made after your last visit).
+        const fresh = workedWhileAway(saved.brief, lastVisit);
+        setWorked(fresh);
+        setBrief({
+          ...saved.brief,
+          items: saved.brief.items.map((item) => ({ ...item, viewed: item.viewed || viewed.has(item.matchId) })),
+          away: fresh ? saved.brief.away : null,
+        });
+      } else {
+        // No saved brief yet today: build one now from the jobs already found.
+        setBrief(buildDailyBrief(result.dashboard, prep, { lastVisit, viewed }));
+      }
       setHour(new Date().getHours());
     });
     return () => {
@@ -195,7 +210,9 @@ export default function TodayPage() {
         <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
           {greeting}{dashboard?.firstName ? `, ${dashboard.firstName}` : ""}.
         </h1>
-        <p className="mt-1 text-base text-slate-600">Here&rsquo;s your job brief for today.</p>
+        <p className="mt-1 text-base text-slate-600">
+          {worked ? "Your agent worked while you were away. Here’s your job brief for today." : "Here’s your job brief for today."}
+        </p>
 
         {error ? (
           <div className={`mt-6 p-6 text-center ${CARD}`} role="alert">
@@ -224,9 +241,16 @@ export default function TodayPage() {
                 <div><dt className="text-xs text-slate-600">Review first</dt><dd className="text-2xl font-semibold text-indigo-700">{brief.priorityCount}</dd></div>
               </dl>
               <p className="mt-3 text-xs text-slate-600">
-                Based on the jobs your agent has found so far{lastSearched ? ` · last search ${lastSearched}` : ""}.
+                {brief.origin === "scheduled_run"
+                  ? `Prepared by your agent at ${new Date(brief.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+                  : "Based on the jobs your agent has found so far"}
+                {lastSearched ? ` · last search ${lastSearched}` : ""}.
               </p>
             </div>
+
+            {(brief.warnings ?? []).map((w) => (
+              <p key={w} className="mt-3 rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20" role="status">{w}</p>
+            ))}
 
             {/* While you were away */}
             {brief.away && (
