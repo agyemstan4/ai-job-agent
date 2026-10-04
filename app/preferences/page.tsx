@@ -18,6 +18,7 @@ import {
   toggleRole,
 } from "@/lib/preferences-client";
 import type { LoadResult, PreferenceField, PreferencesForm, SaveResult } from "@/lib/preferences-client";
+import DescribeSearch from "@/app/components/DescribeSearch";
 
 // Search preferences: what kind of work you want now, where, for how much, and
 // which employer benefits matter — through the existing GET/PUT
@@ -190,6 +191,23 @@ export default function PreferencesPage() {
                     ? "Your saved preferences are shown below. Change anything, then save."
                     : "Nothing is saved yet: job searches use the default software roles and London. Pick what you want below — only the first step is needed."}
                 </p>
+
+                <DescribeSearch
+                  saved={saved}
+                  applyLabel="Fill in the form"
+                  onApply={(p) => {
+                    setForm((prev) => ({
+                      ...prev,
+                      targetRoles: p.targetRoles,
+                      searchTerms: p.searchTerms.join("\n"),
+                      location: p.location,
+                      minSalary: p.minSalary === null ? "" : String(p.minSalary),
+                      benefits: p.benefits,
+                    }));
+                    setFieldErrors({});
+                    setMessage({ kind: "info", text: "The form below is filled in from your request. Check it, then press Save preferences." });
+                  }}
+                />
 
                 {/* 1. Kind of work */}
                 <Step number={1} title="What kind of work are you looking for?" hint="Choose as many as you like, or add your own. You can change direction whenever you want.">

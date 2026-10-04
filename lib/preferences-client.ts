@@ -207,24 +207,32 @@ export type HomeSearchSetup = {
  * home and /preferences never disagree. Nothing chosen and nothing saved:
  * exactly the previous default search.
  */
-export function homeSearchSetup(saved: SearchPreferences | null, chosenRoles: string[]): HomeSearchSetup {
+export function homeSearchSetup(
+  saved: SearchPreferences | null,
+  chosenRoles: string[],
+  /** From an accepted plain-language request (search-intent.ts): replaces these fields. */
+  fromRequest: { searchTerms: string[]; location: string; minSalary: number | null; benefits: BenefitPreferences } | null = null
+): HomeSearchSetup {
   const savedRoles = saved?.targetRoles ?? [];
-  const changed = chosenRoles.length !== savedRoles.length || chosenRoles.some((id) => !savedRoles.includes(id));
+  const changed = fromRequest !== null || chosenRoles.length !== savedRoles.length || chosenRoles.some((id) => !savedRoles.includes(id));
   const labels = labelsForRoles(chosenRoles);
-  const ownSearches = saved?.searchTerms ?? [];
+  const ownSearches = fromRequest ? fromRequest.searchTerms : saved?.searchTerms ?? [];
   const save =
-    changed && (chosenRoles.length > 0 || saved)
+    changed && (chosenRoles.length > 0 || ownSearches.length > 0 || saved)
       ? {
           preferences: {
             targetRoles: chosenRoles,
             searchTerms: ownSearches,
-            location: saved?.location ?? "London",
+            location: fromRequest?.location ?? saved?.location ?? "London",
             excludeKeywords: saved?.excludeKeywords ?? [],
-            minSalary: saved?.minSalary ?? null,
-            benefits: saved?.benefits ?? {},
+            minSalary: fromRequest ? fromRequest.minSalary : saved?.minSalary ?? null,
+            benefits: fromRequest?.benefits ?? saved?.benefits ?? {},
           },
         }
       : null;
+  if (chosenRoles.length === 0 && ownSearches.length > 0) {
+    return { analysisRoles: [...ownSearches], role: undefined, save };
+  }
   if (chosenRoles.length > 0) {
     return { analysisRoles: [...labels, ...ownSearches], role: undefined, save };
   }

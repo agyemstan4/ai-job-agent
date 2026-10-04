@@ -6,6 +6,8 @@ import CommandCentre from "./components/CommandCentre";
 import type { SearchPreferences } from "@/lib/pipeline/preferences";
 import { roleGroups } from "@/lib/pipeline/careers";
 import { EMPTY_PREFERENCES_FORM, homeSearchSetup, loadPreferences, saveRawPreferences, searchPreview } from "@/lib/preferences-client";
+import type { BenefitPreferences } from "@/lib/pipeline/benefits";
+import DescribeSearch from "./components/DescribeSearch";
 
 // The CV route names the file (and picks .pdf or the .docx fallback) in its
 // Content-Disposition header; fall back to a PDF-style name if it's missing.
@@ -37,6 +39,8 @@ export default function Home() {
   // changed here if you like (saved as preferences when you search).
   const [savedPrefs, setSavedPrefs] = useState<SearchPreferences | null>(null);
   const [chosenRoles, setChosenRoles] = useState<string[]>([]);
+  // A reviewed plain-language request (DescribeSearch): saved as preferences when you search.
+  const [request, setRequest] = useState<{ searchTerms: string[]; location: string; minSalary: number | null; benefits: BenefitPreferences } | null>(null);
   const [batchCount, setBatchCount] = useState(3);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
@@ -55,7 +59,8 @@ export default function Home() {
     };
   }, []);
 
-  const ownSearches = savedPrefs?.searchTerms ?? [];
+  const ownSearches = request?.searchTerms ?? savedPrefs?.searchTerms ?? [];
+  const searchLocation = request?.location ?? savedPrefs?.location ?? "London";
   const homePreview = searchPreview({ ...EMPTY_PREFERENCES_FORM, targetRoles: chosenRoles, searchTerms: ownSearches.join("\n") });
   // Saved categories all removed and no searches of your own: nothing valid to save.
   const nothingToSearch = chosenRoles.length === 0 && ownSearches.length === 0 && (savedPrefs?.targetRoles ?? []).length > 0;
@@ -121,7 +126,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("cv", selectedFile);
-      const setup = homeSearchSetup(savedPrefs, chosenRoles);
+      const setup = homeSearchSetup(savedPrefs, chosenRoles, request);
       formData.append("roles", JSON.stringify(setup.analysisRoles));
 
       setLoadingStep("Understanding your experience…");
@@ -491,6 +496,17 @@ if (combinedData.structuredCV) {
             You always review and submit applications yourself.
           </p>
 
+          <div className="mt-6">
+            <DescribeSearch
+              saved={savedPrefs}
+              applyLabel="Use this search"
+              onApply={(p) => {
+                setChosenRoles(p.targetRoles);
+                setRequest({ searchTerms: p.searchTerms, location: p.location, minSalary: p.minSalary, benefits: p.benefits });
+              }}
+            />
+          </div>
+
           <div className="mt-6 grid gap-4 lg:grid-cols-3">
             {/* CV Upload */}
             <div className="flex flex-col rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70">
@@ -560,7 +576,7 @@ if (combinedData.structuredCV) {
                     ? <span className="font-medium text-rose-800">Choose at least one kind of work.</span>
                     : chosenRoles.length === 0 && ownSearches.length === 0
                       ? "Nothing chosen: your agent uses the default software search."
-                      : <>Searching for <span className="font-medium text-slate-900">{homePreview.terms.join(" · ")}</span>{savedPrefs ? ` in ${savedPrefs.location}` : " in London"}.</>}
+                      : <>Searching for <span className="font-medium text-slate-900">{homePreview.terms.join(" · ")}</span>{` in ${searchLocation}`}.</>}
               </p>
             </div>
 
@@ -579,7 +595,7 @@ if (combinedData.structuredCV) {
                 >
                   {loading ? loadingStep : "Find Suitable Jobs"}
                 </button>
-                <p className="mt-2 text-center text-sm text-slate-600" aria-live="polite">{loading ? "Working… you can keep browsing this page." : selectedFile ? "Ready when you are." : "Upload your CV first."}</p>
+                <p className="mt-2 text-center text-sm text-slate-600" aria-live="polite">{loading ? "Working… you can keep browsing this page." : request ? (selectedFile ? "Your search is ready — press Find Suitable Jobs when you want your agent to search." : "Your search is ready. Upload your CV, then press Find Suitable Jobs.") : selectedFile ? "Ready when you are." : "Upload your CV first."}</p>
               </div>
             </div>
           </div>

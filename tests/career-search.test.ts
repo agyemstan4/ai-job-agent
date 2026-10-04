@@ -304,7 +304,8 @@ describe("3f: persistence and the dashboard (scratch DB)", () => {
 
   test("the home page reads and saves through the preferences API, not its own role list", () => {
     const page = read("app/page.tsx");
-    assert.match(page, /homeSearchSetup\(savedPrefs, chosenRoles\)/);
+    // Since 3i the reviewed plain-language request (if any) is passed too.
+    assert.match(page, /homeSearchSetup\(savedPrefs, chosenRoles, request\)/);
     assert.match(page, /await saveRawPreferences\(setup\.save\)/);
     assert.match(page, /body: JSON\.stringify\(\{ role: setup\.role, location: "London", candidateProfileId: profileId \}\)/);
     assert.equal(page.includes('"C# Developer"'), false);
