@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import CommandCentre from "./components/CommandCentre";
 
 // The CV route names the file (and picks .pdf or the .docx fallback) in its
 // Content-Disposition header; fall back to a PDF-style name if it's missing.
@@ -473,8 +474,13 @@ if (combinedData.structuredCV) {
           </div>
         </div>
         <p className="mt-2 text-gray-600">
-          Upload your CV and let AI analyse it for suitable software jobs.
+          Your job-search command centre: matches, preparation, review and tracking. You always submit applications yourself.
         </p>
+
+        <CommandCentre />
+
+        <h2 className="mt-10 text-2xl font-bold text-gray-900">Run a new search</h2>
+        <p className="text-sm text-gray-600">Upload your CV and let AI analyse it for suitable software jobs.</p>
 
         {/* CV Upload */}
         <div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">

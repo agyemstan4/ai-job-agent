@@ -126,10 +126,11 @@ describe("3a: explicit model and prompt versions for preparation", () => {
   });
 
   test("each generator uses the shared model constant and its prompt version", () => {
+    // Since 3c the generation code lives in lib/generation (the routes are thin).
     const routes: [string, string][] = [
-      ["app/api/tailor-cv/route.ts", "TAILOR_CV_PROMPT_VERSION"],
-      ["app/api/cover-letter/route.ts", "COVER_LETTER_PROMPT_VERSION"],
-      ["app/api/application-questions/route.ts", "APPLICATION_QUESTIONS_PROMPT_VERSION"],
+      ["lib/generation/tailor-cv.ts", "TAILOR_CV_PROMPT_VERSION"],
+      ["lib/generation/cover-letter.ts", "COVER_LETTER_PROMPT_VERSION"],
+      ["lib/generation/questions.ts", "APPLICATION_QUESTIONS_PROMPT_VERSION"],
     ];
     for (const [file, version] of routes) {
       const source = read(file);

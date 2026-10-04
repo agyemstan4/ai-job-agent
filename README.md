@@ -39,7 +39,9 @@ every decision that matters.
 
 ```
 app/                       Next.js App Router (UI pages + API routes)
-  page.tsx                 CV upload, job search, matching, batch preparation
+  page.tsx                 Command Centre (stats, top matches, Prepare), CV upload,
+                           job search, matching, batch preparation
+  components/              CommandCentre (the dashboard panel on /)
   review/page.tsx          review queue: edit, approve, reject
   applications/page.tsx    tracker: Apply Now, Mark as applied, status updates
   preferences/page.tsx     search preferences: terms, location, exclusions, salary floor
@@ -52,7 +54,9 @@ lib/
                            manual submission), review read model
   pipeline/                workflows built on the repositories: CV, discovery,
                            matching, applications (batch save), review actions
-  generation/versions.ts   model and prompt versions for preparation
+  generation/              tailoring, CV document (PDF/DOCX), cover letter and
+                           question answers (shared by routes and preparation),
+                           model and prompt versions
   tracker-client.ts        framework-free client logic for /applications
   preferences-client.ts    framework-free client logic for /preferences
   ollama-json.ts           safe parsing of model JSON output
@@ -167,7 +171,16 @@ and 10 strengths) so the model cannot loop until its token limit. Matches
 record the prompt version (`match/v3`).
 
 ### CV and application preparation
-For each selected job the page calls `/api/tailor-cv`, `/api/generate-cv-docx`
+**From the Command Centre** (top of `/`): "Prepare Application" on a match
+calls `POST /api/applications/prepare { matchId, questions? }`, which prepares
+that one job on the server — tailored CV data, the CV file (PDF, or DOCX if
+LibreOffice is unavailable) and a cover letter (plus answers if questions are
+given) — saving each part as it finishes, and stops at *ready for review*. It
+takes several minutes on CPU. Preparing a job that already has an application
+returns that application; a second request while it is being prepared is
+refused. Server-side preparation never sends email or submits anything.
+
+**From the batch tools** (lower on `/`): for each selected job the page calls `/api/tailor-cv`, `/api/generate-cv-docx`
 and `/api/cover-letter`, then saves the result with `POST /api/applications`
 as an application ready for review, with versioned assets. Application
 question answers come from `/api/application-questions`.

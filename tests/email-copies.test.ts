@@ -135,6 +135,16 @@ describe("every email path goes through the opt-in", () => {
     const coverLetter = fs.readFileSync(path.join(appDir, "api", "cover-letter", "route.ts"), "utf8");
     const cv = fs.readFileSync(path.join(appDir, "api", "generate-cv-docx", "route.ts"), "utf8");
     assert.equal(coverLetter.match(/sendEmailCopy\(/g)?.length, 1);
-    assert.equal(cv.match(/sendEmailCopy\(/g)?.length, 2); // PDF and DOCX fallback
+    // One call since 3c: the shared renderer returns the PDF or the DOCX fallback.
+    assert.equal(cv.match(/sendEmailCopy\(/g)?.length, 1);
+  });
+
+  test("the shared generation code (also used by server-side preparation) never sends email", () => {
+    const dir = path.join(appDir, "..", "lib", "generation");
+    for (const file of fs.readdirSync(dir)) {
+      const source = fs.readFileSync(path.join(dir, file), "utf8");
+      // (The CV's own "email" field is data, not sending.)
+      assert.doesNotMatch(source, /email-copies|sendEmailCopy|resend/i, file);
+    }
   });
 });
