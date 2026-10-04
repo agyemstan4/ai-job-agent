@@ -287,7 +287,7 @@ describe("3f: persistence and the dashboard (scratch DB)", () => {
     const [first, second] = d.topMatches;
     assert.deepEqual(first.benefits.map((b) => `${b.id}:${b.status}:${b.priority}`), ["companyCar:confirmed:important"]);
     assert.deepEqual(first.requirements, ["Travel required"]);
-    assert.deepEqual(first.standsOut, ["Matches your Territory Management search", "Salary meets your £35,000 minimum", "Company car — important to you"]);
+    assert.deepEqual(first.standsOut, ["Territory Management is one of your target roles", "Salary meets your £35,000 minimum", "Company car matches an important preference"]);
     assert.deepEqual(second.benefits, [], "nothing is claimed from vague text");
     assert.deepEqual(second.requirements, ["Driving licence needed"]);
     assert.deepEqual(second.standsOut, []);

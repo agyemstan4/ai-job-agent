@@ -157,57 +157,129 @@ function Breakdown({ breakdown }: { breakdown: NonNullable<DashboardMatch["break
   );
 }
 
-/** Confirmed benefits only: never a positive claim the advert doesn't make. */
-function BenefitChips({ match, max }: { match: DashboardMatch; max: number }) {
+const PRIORITY_TEXT = { important: "Important to you", preferred: "Nice to have for you" } as const;
+
+/**
+ * Confirmed benefits only — never a positive claim the advert doesn't make.
+ * "✓" = stated in the job advert; "★" = one of your own benefit preferences.
+ * Your preferences come first; at most `max` are shown.
+ */
+function BenefitChips({ match, max, large }: { match: DashboardMatch; max: number; large?: boolean }) {
   const confirmed = match.benefits.filter((b) => b.status === "confirmed").slice(0, max);
   if (confirmed.length === 0) return null;
   return (
-    <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Benefits stated in the advert">
+    <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Benefits confirmed by the job advert">
       {confirmed.map((b) => (
         <li
           key={b.id}
-          title={b.evidence ?? undefined}
-          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${b.priority ? "bg-emerald-50 text-emerald-900 ring-emerald-600/25" : "bg-white text-slate-700 ring-slate-300"}`}
+          className={`inline-flex flex-wrap items-center gap-x-1.5 whitespace-nowrap rounded-md ring-1 ring-inset ${large ? "px-2.5 py-1 text-sm" : "px-2 py-0.5 text-xs"} font-medium ${
+            b.priority ? "bg-emerald-50 text-emerald-900 ring-emerald-600/30" : "bg-white text-slate-700 ring-slate-300"
+          }`}
         >
-          <span aria-hidden="true">✓</span>{b.label}{b.priority && <span className="sr-only"> (one of your preferences)</span>}
+          <span aria-hidden="true">✓</span>
+          {b.label}
+          {b.priority && (
+            <span className="inline-flex items-center gap-0.5 text-amber-700">
+              <span aria-hidden="true">★</span>
+              {large ? <span className="font-semibold">{b.priority === "important" ? "Important to you" : "Nice to have"}</span> : <span className="sr-only">{PRIORITY_TEXT[b.priority]}</span>}
+            </span>
+          )}
+          <span className="sr-only"> — confirmed by the job advert</span>
         </li>
       ))}
     </ul>
   );
 }
 
-/** What the advert says about benefits and what it asks of you, with its own words as evidence. */
-function BenefitDetails({ match }: { match: DashboardMatch }) {
-  if (match.benefits.length === 0 && match.requirements.length === 0) return null;
+const FIT_TEXT: Record<string, { icon: string; text: string; className: string }> = {
+  confirmed: { icon: "✓", text: "Confirmed by the job advert", className: "text-emerald-800" },
+  unclear: { icon: "?", text: "Mentioned, but not clearly confirmed", className: "text-amber-800" },
+  not_stated: { icon: "—", text: "Not stated in the advert", className: "text-slate-600" },
+};
+
+/** Each benefit you care about, and what this advert says about it. "Not stated" makes no claim about what the employer offers. */
+function PreferenceFitList({ match }: { match: DashboardMatch }) {
+  if (match.preferenceFit.length === 0) return null;
   return (
-    <div>
-      <h4 className="text-sm font-semibold text-slate-900">Benefits in the advert</h4>
-      <ul className="mt-2 space-y-1.5 text-sm">
-        {match.benefits.map((b) => (
-          <li key={b.id} className="flex gap-2">
-            <span className={`w-4 shrink-0 text-center ${b.status === "confirmed" ? "text-emerald-600" : "text-amber-600"}`} aria-hidden="true">{b.status === "confirmed" ? "✓" : "?"}</span>
-            <span className="text-slate-700">
-              <span className="font-medium text-slate-900">{b.label}</span>
-              {b.status === "confirmed" ? <span className="sr-only"> (stated)</span> : <> — {b.note}</>}
-              {b.evidence && <span className="block text-slate-600">&ldquo;{b.evidence}&rdquo;</span>}
+    <ul className="divide-y divide-slate-100 rounded-lg bg-white ring-1 ring-slate-200/80" aria-label="Your benefit preferences for this job">
+      {match.preferenceFit.map((p) => {
+        const fit = FIT_TEXT[p.status];
+        return (
+          <li key={p.id} className="flex flex-col gap-0.5 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <span className="font-medium text-slate-900">
+              {p.label}
+              <span className="ml-2 inline-flex items-center gap-0.5 text-xs font-semibold text-amber-700"><span aria-hidden="true">★</span>{p.priority === "important" ? "Important to you" : "Nice to have"}</span>
+            </span>
+            <span className={`inline-flex items-center gap-1.5 ${fit.className}`}>
+              <span aria-hidden="true" className="w-3 text-center">{fit.icon}</span>{fit.text}
             </span>
           </li>
-        ))}
-        {match.requirements.map((r) => (
-          <li key={r} className="flex gap-2">
-            <span className="w-4 shrink-0 text-center text-slate-500" aria-hidden="true">•</span>
-            <span className="text-slate-700">{r}</span>
-          </li>
-        ))}
-      </ul>
-      {match.benefits.length === 0 && <p className="mt-1 text-sm text-slate-600">No benefits are stated in the advert text your agent has.</p>}
+        );
+      })}
+    </ul>
+  );
+}
+
+/** "Employer benefits": what the advert states, with its own words as evidence; then what it asks of you. */
+function BenefitDetails({ match, withPreferences = true }: { match: DashboardMatch; withPreferences?: boolean }) {
+  const shown = match.benefits;
+  const showPrefs = withPreferences && match.preferenceFit.length > 0;
+  if (shown.length === 0 && match.requirements.length === 0 && !showPrefs) return null;
+  return (
+    <div className="space-y-3">
+      <div>
+        <h4 className="text-sm font-semibold text-slate-900">Employer benefits</h4>
+        {shown.length === 0 ? (
+          <p className="mt-1 text-sm text-slate-600">Not enough information in the advert to tell which benefits the employer provides.</p>
+        ) : (
+          <ul className="mt-2 space-y-2 text-sm">
+            {shown.map((b) => (
+              <li key={b.id} className="flex gap-2">
+                <span className={`w-4 shrink-0 text-center font-semibold ${b.status === "confirmed" ? "text-emerald-700" : "text-amber-700"}`} aria-hidden="true">{b.status === "confirmed" ? "✓" : "?"}</span>
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-900">
+                    {b.label}
+                    {b.priority && <span className="ml-2 text-xs font-semibold text-amber-700"><span aria-hidden="true">★ </span>{b.priority === "important" ? "Important to you" : "Nice to have"}</span>}
+                  </p>
+                  <p className={b.status === "confirmed" ? "text-emerald-800" : "text-amber-800"}>
+                    {b.status === "confirmed" ? "Confirmed by the job advert." : `${b.note ?? "Mentioned"} — check with the employer.`}
+                  </p>
+                  {b.evidence && (
+                    <details className="mt-0.5">
+                      <summary className="cursor-pointer text-slate-600 hover:text-slate-900">Why we say this</summary>
+                      <p className="mt-1 border-l-2 border-slate-200 pl-2 text-slate-700">&ldquo;{b.evidence}&rdquo;</p>
+                    </details>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {showPrefs && (
+        <div>
+          <h4 className="text-sm font-semibold text-slate-900">Your benefit preferences</h4>
+          <div className="mt-2"><PreferenceFitList match={match} /></div>
+        </div>
+      )}
+      {match.requirements.length > 0 && (
+        <div>
+          <h4 className="text-sm font-semibold text-slate-900">The advert also asks for</h4>
+          <ul className="mt-1 flex flex-wrap gap-1.5">
+            {match.requirements.map((r) => (
+              <li key={r} className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
 
 /** Why a job fits: only the stored match explanation (strengths, reason, gaps) and the advert's stated benefits. */
-function WhyDetails({ match, compact }: { match: DashboardMatch; compact?: boolean }) {
-  const hasAny = match.strengths.length > 0 || match.reason || match.missingSkills.length > 0 || match.benefits.length > 0 || match.requirements.length > 0;
+function WhyDetails({ match, compact, withPreferences = true }: { match: DashboardMatch; compact?: boolean; withPreferences?: boolean }) {
+  const hasAny =
+    match.strengths.length > 0 || match.reason || match.missingSkills.length > 0 || match.benefits.length > 0 || match.requirements.length > 0 || match.preferenceFit.length > 0;
   if (!hasAny) return <p className="text-sm text-slate-600">No detailed explanation was saved for this match.</p>;
   return (
     <div className="space-y-4">
@@ -238,7 +310,7 @@ function WhyDetails({ match, compact }: { match: DashboardMatch; compact?: boole
           </p>
         </div>
       )}
-      <BenefitDetails match={match} />
+      <BenefitDetails match={match} withPreferences={withPreferences} />
     </div>
   );
 }
@@ -634,6 +706,12 @@ export default function CommandCentre() {
                   <p className="mt-0.5 text-sm text-slate-600">
                     {feed.length} {feed.length === 1 ? "job" : "jobs"} ranked against your CV. Tick several to prepare them together.
                   </p>
+                  {Object.keys(dashboard.search.benefits).length > 0 && (
+                    <p className="mt-1 text-sm text-slate-600">
+                      <span className="font-medium text-slate-800">✓</span> stated in the job advert ·{" "}
+                      <span className="font-medium text-amber-700">★</span> a benefit you marked as important or nice to have
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 sm:pb-0" role="tablist" aria-label="Filter your opportunities">
@@ -778,23 +856,34 @@ function FeaturedCard({ match, action, strong, onPrepare, notice, prepItem, isNe
               {source && <span>via {source}</span>}
               {found && <span>found {found}</span>}
             </div>
-            <BenefitChips match={match} max={4} />
           </div>
         </div>
+        <BenefitChips match={match} max={5} large />
 
-        {match.standsOut.length > 0 && (
-          <div className="mt-6 rounded-xl bg-emerald-50/60 p-4 ring-1 ring-inset ring-emerald-600/15">
-            <h3 className="text-sm font-semibold text-slate-900">Why this job stands out for you</h3>
-            <ul className="mt-2 grid gap-1 text-sm text-slate-800 sm:grid-cols-2">
-              {match.standsOut.map((reason) => (
-                <li key={reason} className="flex gap-2"><span className="text-emerald-600" aria-hidden="true">✓</span>{reason}</li>
-              ))}
-            </ul>
+        {(match.standsOut.length > 0 || match.preferenceFit.length > 0) && (
+          <div className="mt-6 grid gap-4 rounded-xl bg-emerald-50/50 p-4 ring-1 ring-inset ring-emerald-600/15 lg:grid-cols-2">
+            {match.standsOut.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">Why this job stands out</h3>
+                {match.benefitSummary && <p className="mt-1 text-sm font-medium text-emerald-900">{match.benefitSummary}</p>}
+                <ul className="mt-2 space-y-1 text-sm text-slate-800">
+                  {match.standsOut.map((reason) => (
+                    <li key={reason} className="flex gap-2"><span className="text-emerald-700" aria-hidden="true">✓</span>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {match.preferenceFit.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">Your benefit preferences</h3>
+                <div className="mt-2"><PreferenceFitList match={match} /></div>
+              </div>
+            )}
           </div>
         )}
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)]">
-          <WhyDetails match={match} />
+          <WhyDetails match={match} withPreferences={false} />
           {match.breakdown && (
             <div className="self-start rounded-xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/70">
               <h3 className="mb-3 text-sm font-semibold text-slate-900">How you match</h3>

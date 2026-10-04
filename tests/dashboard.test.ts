@@ -273,7 +273,7 @@ const fake = (over: Partial<DashboardMatch>): DashboardMatch => ({
   matchId: 1, jobId: 1, score: 75, title: "Android Developer", company: "Mobi", location: "London", salaryMin: null, salaryMax: null,
   salaryIsPredicted: false, contractTime: null, contractType: null, url: null, sources: [], reason: null, strengths: ["Kotlin"],
   missingSkills: [], breakdown: null, postedAt: null, firstSeenAt: "2026-10-01 10:00:00", matchedAt: "2026-10-01 10:00:00",
-  promptVersion: "match/v3", application: null, benefits: [], requirements: [], standsOut: [], ...over,
+  promptVersion: "match/v3", application: null, benefits: [], requirements: [], standsOut: [], preferenceFit: [], benefitSummary: null, ...over,
 });
 
 describe("3c v2: presentation helpers", () => {

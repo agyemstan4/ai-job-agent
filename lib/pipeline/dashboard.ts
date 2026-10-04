@@ -5,8 +5,8 @@ import type { ApplicationStatus } from "../repositories/applications.ts";
 import { DEFAULT_SEARCH_TERMS, knownAnnualSalary, searchPlan, storedPreferences, titleHasKeyword } from "./preferences.ts";
 import type { SearchPreferences } from "./preferences.ts";
 import { getBestDescription } from "../repositories/jobs.ts";
-import { benefitHighlights, detectBenefits } from "./benefits.ts";
-import type { BenefitHighlight, BenefitPreferences } from "./benefits.ts";
+import { BENEFITS, benefitHighlights, detectBenefits } from "./benefits.ts";
+import type { BenefitHighlight, BenefitId, BenefitPreferences, BenefitPriority, BenefitStatus } from "./benefits.ts";
 import { roleCategory } from "./careers.ts";
 
 // Phase 3 checkpoint 3c: the Command Centre data (GET /api/dashboard), read
@@ -58,6 +58,18 @@ export type DashboardMatch = {
   requirements: string[];
   /** Evidence-based reasons this job fits what you asked for (may be empty). */
   standsOut: string[];
+  /** Each benefit you care about and what this advert says about it ("not_stated" is not "not provided"). */
+  preferenceFit: PreferenceFit[];
+  /** One plain sentence when confirmed benefits match your preferences, else null. */
+  benefitSummary: string | null;
+};
+
+export type PreferenceFit = {
+  id: BenefitId;
+  label: string;
+  priority: BenefitPriority;
+  status: BenefitStatus;
+  evidence: string | null;
 };
 
 export type Dashboard = {
@@ -228,6 +240,33 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
 
 const REQUIREMENT_LABELS = { ownVehicle: "Own vehicle needed", drivingLicence: "Driving licence needed", travel: "Travel required" } as const;
 
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
+/** "A", "A and b", "A, b and c". */
+function joinLabels(labels: string[]): string {
+  const [first, ...rest] = labels;
+  if (rest.length === 0) return first;
+  const tail = rest.map(lowerFirst);
+  return `${first}${tail.length > 1 ? ", " + tail.slice(0, -1).join(", ") : ""} and ${tail[tail.length - 1]}`;
+}
+
+/** The sentence for the featured job, from confirmed benefits that match your preferences only. */
+export function benefitSummaryFor(fit: PreferenceFit[]): string | null {
+  const important = fit.filter((p) => p.status === "confirmed" && p.priority === "important").map((p) => p.label);
+  const nice = fit.filter((p) => p.status === "confirmed" && p.priority === "preferred").map((p) => p.label);
+  if (important.length > 0) {
+    const n = important.length;
+    return `${joinLabels(important)} ${n === 1 ? "matches one" : `match ${NUMBER_WORDS[n] ?? n}`} of your important preferences.`;
+  }
+  if (nice.length > 0) {
+    return `${joinLabels(nice)} ${nice.length === 1 ? "is" : "are"} on your nice-to-have list.`;
+  }
+  return null;
+}
+
+const LABELS = new Map(BENEFITS.map((b) => [b.id as BenefitId, b.label]));
+
 /**
  * Benefits and fit reasons for one match, from the advert's own stored text
  * (deterministic, no model calls). Only what the text supports is claimed.
@@ -236,7 +275,7 @@ function benefitView(
   db: DB,
   r: Record<string, unknown>,
   preferences: SearchPreferences | null
-): Pick<DashboardMatch, "benefits" | "requirements" | "standsOut"> {
+): Pick<DashboardMatch, "benefits" | "requirements" | "standsOut" | "preferenceFit" | "benefitSummary"> {
   const title = r.title as string;
   const report = detectBenefits({ title, description: getBestDescription(db, r.job_id as number)?.content ?? "" });
   const benefits = benefitHighlights(report, preferences?.benefits ?? {});
@@ -244,12 +283,17 @@ function benefitView(
     .filter((id) => report.requirements[id].present)
     .map((id) => REQUIREMENT_LABELS[id]);
 
+  // Your benefits, important first, each with what the advert says.
+  const preferenceFit: PreferenceFit[] = (Object.entries(preferences?.benefits ?? {}) as [BenefitId, BenefitPriority][])
+    .sort(([, a], [, b]) => (a === b ? 0 : a === "important" ? -1 : 1))
+    .map(([id, priority]) => ({ id, label: LABELS.get(id) ?? id, priority, status: report.benefits[id].status, evidence: report.benefits[id].evidence }));
+
   const standsOut: string[] = [];
   if (preferences) {
     for (const id of preferences.targetRoles) {
       const category = roleCategory(id);
       if (category && category.terms.some((term) => titleHasKeyword(title, term))) {
-        standsOut.push(`Matches your ${category.label} search`);
+        standsOut.push(`${category.label} is one of your target roles`);
         break;
       }
     }
@@ -259,9 +303,9 @@ function benefitView(
     if (preferences.minSalary !== null && salary !== null && salary >= preferences.minSalary) {
       standsOut.push(`Salary meets your £${preferences.minSalary.toLocaleString("en-GB")} minimum`);
     }
-    for (const b of benefits) {
-      if (b.status === "confirmed" && b.priority) standsOut.push(`${b.label} — ${b.priority === "important" ? "important to you" : "on your wish list"}`);
+    for (const p of preferenceFit) {
+      if (p.status === "confirmed") standsOut.push(`${p.label} matches ${p.priority === "important" ? "an important preference" : "one of your nice-to-haves"}`);
     }
   }
-  return { benefits, requirements, standsOut };
+  return { benefits, requirements, standsOut, preferenceFit, benefitSummary: benefitSummaryFor(preferenceFit) };
 }
