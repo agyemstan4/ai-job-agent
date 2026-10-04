@@ -418,8 +418,9 @@ describe("3c v2: Command Centre, navigation and home page (source checks)", () =
     assert.match(layout, /<AppNav \/>/);
     const hrefs = [...nav.matchAll(/href: "([^"]+)"/g)].map((x) => x[1]);
     // Since the usability pass: plain-language sections; /review lives under Applications (tabs).
-    assert.deepEqual(hrefs, ["/", "/#search", "/applications", "/preferences"]);
-    assert.deepEqual([...nav.matchAll(/label: "([^"]+)"/g)].map((x) => x[1]), ["Home", "Find Jobs", "Applications", "Preferences"]);
+    // Since 4a: Today (the mobile daily brief).
+    assert.deepEqual(hrefs, ["/", "/today", "/#search", "/applications", "/preferences"]);
+    assert.deepEqual([...nav.matchAll(/label: "([^"]+)"/g)].map((x) => x[1]), ["Home", "Today", "Find Jobs", "Applications", "Preferences"]);
     assert.match(nav, /import \{ activeSection \} from "@\/lib\/nav";/);
     assert.match(nav, /className="hidden items-center gap-1 md:flex"/);
     assert.match(nav, /fixed inset-x-0 bottom-0 z-40[^"]*md:hidden/);

@@ -81,7 +81,7 @@ describe("usability: labels and navigation", () => {
   });
 
   test("every link on the redesigned pages points to an existing route", () => {
-    const routes = new Set(["/", "/review", "/applications", "/preferences"]);
+    const routes = new Set(["/", "/today", "/review", "/applications", "/preferences"]);
     for (const file of ["app/components/CommandCentre.tsx", "app/components/AppNav.tsx", "app/components/ApplicationsTabs.tsx", "app/page.tsx", "app/review/page.tsx", "app/applications/page.tsx", "app/preferences/page.tsx", "lib/dashboard-client.ts"]) {
       const source = read(file);
       const hrefs = [...source.matchAll(/href(?:=|: )"([^"]+)"/g)].map((m) => m[1]);

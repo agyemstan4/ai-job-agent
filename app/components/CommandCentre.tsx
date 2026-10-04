@@ -62,11 +62,11 @@ const NOTICE_STYLES: Record<Notice["kind"], string> = {
 
 const CARD = "rounded-2xl bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] ring-1 ring-slate-200/80";
 
-function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${TONES[tone]}`}>{children}</span>;
 }
 
-function scoreColour(score: number | null) {
+export function scoreColour(score: number | null) {
   if (score === null) return { ring: "#cbd5e1", text: "text-slate-600" };
   if (score >= 80) return { ring: "#059669", text: "text-emerald-700" };
   if (score >= 70) return { ring: "#16a34a", text: "text-green-700" };
@@ -75,7 +75,7 @@ function scoreColour(score: number | null) {
 }
 
 /** A circular match score. The text label next to it carries the meaning, not the colour. */
-function ScoreRing({ score, size = 76 }: { score: number | null; size?: number }) {
+export function ScoreRing({ score, size = 76 }: { score: number | null; size?: number }) {
   const stroke = size > 60 ? 7 : 5;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -95,9 +95,9 @@ function ScoreRing({ score, size = 76 }: { score: number | null; size?: number }
 }
 
 /** The next action for a match, always exactly one primary button. */
-type CardAction = MatchAction | "queued";
+export type CardAction = MatchAction | "queued";
 
-function PrimaryAction({ action, onPrepare, disabled, block, stage }: { action: CardAction; onPrepare: () => void; disabled: boolean; block?: boolean; stage?: string | null }) {
+export function PrimaryAction({ action, onPrepare, disabled, block, stage }: { action: CardAction; onPrepare: () => void; disabled: boolean; block?: boolean; stage?: string | null }) {
   const base = `inline-flex min-h-10 items-center justify-center whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold transition ${block ? "w-full" : ""}`;
   switch (action) {
     case "prepare":
@@ -125,7 +125,7 @@ function PrimaryAction({ action, onPrepare, disabled, block, stage }: { action: 
   }
 }
 
-function ViewJob({ url, block, subtle }: { url: string | null; block?: boolean; subtle?: boolean }) {
+export function ViewJob({ url, block, subtle }: { url: string | null; block?: boolean; subtle?: boolean }) {
   if (!url) return null;
   return (
     <a
@@ -164,7 +164,7 @@ const PRIORITY_TEXT = { important: "Important to you", preferred: "Nice to have 
  * "✓" = stated in the job advert; "★" = one of your own benefit preferences.
  * Your preferences come first; at most `max` are shown.
  */
-function BenefitChips({ match, max, large }: { match: DashboardMatch; max: number; large?: boolean }) {
+export function BenefitChips({ match, max, large }: { match: DashboardMatch; max: number; large?: boolean }) {
   const confirmed = match.benefits.filter((b) => b.status === "confirmed").slice(0, max);
   if (confirmed.length === 0) return null;
   return (
@@ -198,7 +198,7 @@ const FIT_TEXT: Record<string, { icon: string; text: string; className: string }
 };
 
 /** Each benefit you care about, and what this advert says about it. "Not stated" makes no claim about what the employer offers. */
-function PreferenceFitList({ match }: { match: DashboardMatch }) {
+export function PreferenceFitList({ match }: { match: DashboardMatch }) {
   if (match.preferenceFit.length === 0) return null;
   return (
     <ul className="divide-y divide-slate-100 rounded-lg bg-white ring-1 ring-slate-200/80" aria-label="Your benefit preferences for this job">
@@ -221,7 +221,7 @@ function PreferenceFitList({ match }: { match: DashboardMatch }) {
 }
 
 /** "Employer benefits": what the advert states, with its own words as evidence; then what it asks of you. */
-function BenefitDetails({ match, withPreferences = true }: { match: DashboardMatch; withPreferences?: boolean }) {
+export function BenefitDetails({ match, withPreferences = true }: { match: DashboardMatch; withPreferences?: boolean }) {
   const shown = match.benefits;
   const showPrefs = withPreferences && match.preferenceFit.length > 0;
   if (shown.length === 0 && match.requirements.length === 0 && !showPrefs) return null;
@@ -277,7 +277,7 @@ function BenefitDetails({ match, withPreferences = true }: { match: DashboardMat
 }
 
 /** Why a job is relevant to you (✓) and what is worth checking (!), from opportunity factors — never invented. */
-function OpportunityReasons({ match, title, showSummary }: { match: DashboardMatch; title: string; showSummary?: boolean }) {
+export function OpportunityReasons({ match, title, showSummary }: { match: DashboardMatch; title: string; showSummary?: boolean }) {
   if (match.standsOut.length === 0 && match.cautions.length === 0) return null;
   return (
     <div>
@@ -310,7 +310,7 @@ function OpportunityReasons({ match, title, showSummary }: { match: DashboardMat
 }
 
 /** Why a job fits: only the stored match explanation (strengths, reason, gaps) and the advert's stated benefits. */
-function WhyDetails({ match, compact, withPreferences = true, withReasons = true }: { match: DashboardMatch; compact?: boolean; withPreferences?: boolean; withReasons?: boolean }) {
+export function WhyDetails({ match, compact, withPreferences = true, withReasons = true }: { match: DashboardMatch; compact?: boolean; withPreferences?: boolean; withReasons?: boolean }) {
   const hasAny =
     match.strengths.length > 0 || match.reason || match.missingSkills.length > 0 || match.benefits.length > 0 || match.requirements.length > 0 || match.preferenceFit.length > 0 ||
     match.standsOut.length > 0 || match.cautions.length > 0;
