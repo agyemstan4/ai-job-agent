@@ -1,13 +1,25 @@
 import type { DB } from "../repositories/shared.ts";
 import { getCandidate, getDefaultCandidate, getProfile, updateCandidate } from "../repositories/candidates.ts";
+import { labelsForRoles, roleCategory, termsForRoles } from "./careers.ts";
+import { PREFERABLE_BENEFITS } from "./benefits.ts";
+import type { BenefitId, BenefitPreferences } from "./benefits.ts";
 
 // Phase 3 checkpoint 3b-5a: search preferences, stored in
 // candidates.preferences_json (existing column, no migration).
+// Flexible career search (3f) adds, as optional fields of the same object:
+//   • targetRoles — career categories (lib/pipeline/careers.ts) whose
+//     plain-language labels stand for job-site search terms;
+//   • benefits — employer benefits the user cares about, each "preferred" or
+//     "important" (shown against the evidence found in adverts; not used for
+//     searching or scoring yet).
+// Records saved before 3f (no targetRoles/benefits) stay valid and behave as before.
 //
 // With no preferences saved, job discovery behaves exactly as before (the
 // fixed term list, the location sent by the caller). With preferences:
-//   • the role selected on / is searched first, then the preferred terms
-//     (at most 7 terms in total — no more requests than before);
+//   • the chosen categories' terms, then the user's own search terms (at
+//     most 6, and at most 7 terms per search — no more requests than before);
+//     the role selected on / is searched first only for preferences without
+//     categories (as before 3f);
 //   • the preferred location replaces the one sent by the caller;
 //   • jobs whose title contains an excluded keyword, or whose known annual
 //     salary is below the floor, are left out of the new jobs returned.
@@ -25,17 +37,22 @@ export const ANNUAL_SALARY_THRESHOLD = 1_000;
 
 export type SearchPreferences = {
   version: typeof PREFERENCES_VERSION;
+  /** Career category ids (careers.ts). */
+  targetRoles: string[];
+  /** The user's own searches, e.g. "Territory Manager". */
   searchTerms: string[];
   location: string;
   excludeKeywords: string[];
   minSalary: number | null;
+  benefits: BenefitPreferences;
 };
 
 export type PreferencesValidation =
   | { ok: true; preferences: SearchPreferences }
   | { ok: false; fieldErrors: Record<string, string> };
 
-const ALLOWED_FIELDS = new Set(["version", "searchTerms", "location", "excludeKeywords", "minSalary"]);
+const ALLOWED_FIELDS = new Set(["version", "targetRoles", "searchTerms", "location", "excludeKeywords", "minSalary", "benefits"]);
+const BENEFIT_PRIORITIES = new Set(["preferred", "important"]);
 
 const clean = (value: string) => value.replace(/\s+/g, " ").trim();
 
@@ -78,8 +95,52 @@ export function validatePreferences(input: unknown): PreferencesValidation {
     fieldErrors.version = `Unsupported version (expected ${PREFERENCES_VERSION})`;
   }
 
-  const searchTerms = cleanList(raw.searchTerms, { label: "Search terms", min: 1, max: MAX_SEARCH_TERMS, minChars: 2, maxChars: 60 });
-  if (typeof searchTerms === "string") fieldErrors.searchTerms = searchTerms;
+  // Career categories: known ids only, without duplicates.
+  let targetRoles: string[] = [];
+  if (raw.targetRoles !== undefined) {
+    if (!Array.isArray(raw.targetRoles)) {
+      fieldErrors.targetRoles = "Kinds of work must be a list";
+    } else if (raw.targetRoles.some((id) => typeof id !== "string" || !roleCategory(id))) {
+      fieldErrors.targetRoles = "Unknown kind of work";
+    } else {
+      targetRoles = [...new Set(raw.targetRoles as string[])];
+    }
+  }
+
+  const searchTerms =
+    raw.searchTerms === undefined && targetRoles.length > 0
+      ? []
+      : cleanList(raw.searchTerms, { label: "Search terms", min: targetRoles.length > 0 ? 0 : 1, max: MAX_SEARCH_TERMS, minChars: 2, maxChars: 60 });
+  if (typeof searchTerms === "string") {
+    fieldErrors.searchTerms =
+      targetRoles.length === 0 && Array.isArray(raw.searchTerms) && raw.searchTerms.length === 0
+        ? "Choose at least one kind of work, or add a search of your own"
+        : searchTerms;
+  } else if (!fieldErrors.targetRoles) {
+    // Every term is two requests (one per job site): keep the existing limit.
+    const total = new Set([...termsForRoles(targetRoles), ...searchTerms].map((t) => t.toLowerCase())).size;
+    if (total > MAX_SEARCH_TERMS) {
+      fieldErrors.targetRoles = `That is ${total} searches. Choose up to ${MAX_SEARCH_TERMS} in total (some kinds of work search for 2 job titles).`;
+    }
+  }
+
+  // Benefits: known ids, each "preferred" or "important".
+  const benefits: BenefitPreferences = {};
+  if (raw.benefits !== undefined) {
+    if (typeof raw.benefits !== "object" || raw.benefits === null || Array.isArray(raw.benefits)) {
+      fieldErrors.benefits = "Benefits must be an object";
+    } else {
+      for (const [id, priority] of Object.entries(raw.benefits as Record<string, unknown>)) {
+        if (!(PREFERABLE_BENEFITS as string[]).includes(id)) {
+          fieldErrors.benefits = `Unknown benefit: ${id}`;
+        } else if (typeof priority !== "string" || !BENEFIT_PRIORITIES.has(priority)) {
+          fieldErrors.benefits = "Each benefit must be \"preferred\" or \"important\"";
+        } else {
+          benefits[id as BenefitId] = priority as "preferred" | "important";
+        }
+      }
+    }
+  }
 
   let location = "";
   if (typeof raw.location !== "string") {
@@ -109,10 +170,12 @@ export function validatePreferences(input: unknown): PreferencesValidation {
     ok: true,
     preferences: {
       version: PREFERENCES_VERSION,
+      targetRoles,
       searchTerms: searchTerms as string[],
       location,
       excludeKeywords: excludeKeywords as string[],
       minSalary,
+      benefits,
     },
   };
 }
@@ -142,12 +205,20 @@ export const DEFAULT_SEARCH_TERMS = [
   "full stack developer",
 ];
 
-export type SearchPlan = { terms: string[]; location: string; usedPreferences: boolean };
+export type SearchPlan = {
+  terms: string[];
+  location: string;
+  usedPreferences: boolean;
+  /** Plain-language names of the chosen kinds of work (empty without categories). */
+  roleLabels: string[];
+};
 
 /**
  * The search terms and location for one discovery run. With no preferences
  * this is exactly the previous behaviour (including its case-sensitive
- * de-duplication of the selected role against the fixed terms).
+ * de-duplication of the selected role against the fixed terms). With
+ * categories, they decide what is searched (the role chosen on / is not
+ * added); without categories, saved preferences behave exactly as before 3f.
  */
 export function searchPlan(
   preferences: SearchPreferences | null,
@@ -158,17 +229,24 @@ export function searchPlan(
       terms: Array.from(new Set([request.role as string, ...DEFAULT_SEARCH_TERMS])),
       location: request.location as string,
       usedPreferences: false,
+      roleLabels: [],
     };
   }
+  const targetRoles = preferences.targetRoles ?? [];
   const terms: string[] = [];
   const seen = new Set<string>();
-  const role = typeof request.role === "string" ? clean(request.role) : "";
-  for (const term of [role, ...preferences.searchTerms]) {
+  const role = targetRoles.length === 0 && typeof request.role === "string" ? clean(request.role) : "";
+  for (const term of [role, ...termsForRoles(targetRoles), ...preferences.searchTerms]) {
     if (!term || seen.has(term.toLowerCase())) continue;
     seen.add(term.toLowerCase());
     terms.push(term);
   }
-  return { terms: terms.slice(0, MAX_TOTAL_SEARCH_TERMS), location: preferences.location, usedPreferences: true };
+  return {
+    terms: terms.slice(0, MAX_TOTAL_SEARCH_TERMS),
+    location: preferences.location,
+    usedPreferences: true,
+    roleLabels: labelsForRoles(targetRoles),
+  };
 }
 
 export type FilterableJob = {

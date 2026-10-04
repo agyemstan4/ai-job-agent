@@ -2,7 +2,12 @@ import type { DB } from "../repositories/shared.ts";
 import { fromJson } from "../repositories/shared.ts";
 import { getCurrentProfile, getDefaultCandidate } from "../repositories/candidates.ts";
 import type { ApplicationStatus } from "../repositories/applications.ts";
-import { DEFAULT_SEARCH_TERMS, storedPreferences } from "./preferences.ts";
+import { DEFAULT_SEARCH_TERMS, knownAnnualSalary, searchPlan, storedPreferences, titleHasKeyword } from "./preferences.ts";
+import type { SearchPreferences } from "./preferences.ts";
+import { getBestDescription } from "../repositories/jobs.ts";
+import { benefitHighlights, detectBenefits } from "./benefits.ts";
+import type { BenefitHighlight, BenefitPreferences } from "./benefits.ts";
+import { roleCategory } from "./careers.ts";
 
 // Phase 3 checkpoint 3c: the Command Centre data (GET /api/dashboard), read
 // only. Stats and the strongest current matches for the current CV profile,
@@ -47,6 +52,12 @@ export type DashboardMatch = {
   matchedAt: string;
   promptVersion: string | null;
   application: { id: number; status: ApplicationStatus } | null;
+  /** Benefits stated in the advert (confirmed), plus unclear mentions of ones you care about. */
+  benefits: BenefitHighlight[];
+  /** What the advert asks of you, e.g. "Own vehicle needed". */
+  requirements: string[];
+  /** Evidence-based reasons this job fits what you asked for (may be empty). */
+  standsOut: string[];
 };
 
 export type Dashboard = {
@@ -54,7 +65,15 @@ export type Dashboard = {
   /** The candidate's first name, for the greeting (null if unknown). */
   firstName: string | null;
   /** What job discovery searches for: saved preferences, or the defaults. */
-  search: { usingPreferences: boolean; location: string; terms: string[] };
+  search: {
+    usingPreferences: boolean;
+    location: string;
+    terms: string[];
+    /** The chosen kinds of work, in plain language. */
+    roles: string[];
+    minSalary: number | null;
+    benefits: BenefitPreferences;
+  };
   /** When the agent last finished a search and a matching run. */
   agent: { lastDiscoveryAt: string | null; lastMatchingAt: string | null };
   stats: {
@@ -145,8 +164,11 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
   const base = {
     firstName,
     search: preferences
-      ? { usingPreferences: true, location: preferences.location, terms: preferences.searchTerms }
-      : { usingPreferences: false, location: "London", terms: DEFAULT_SEARCH_TERMS },
+      ? (() => {
+          const plan = searchPlan(preferences, {});
+          return { usingPreferences: true, location: preferences.location, terms: plan.terms, roles: plan.roleLabels, minSalary: preferences.minSalary, benefits: preferences.benefits };
+        })()
+      : { usingPreferences: false, location: "London", terms: DEFAULT_SEARCH_TERMS, roles: [], minSalary: null, benefits: {} },
     agent: { lastDiscoveryAt: lastFinished(db, "discovery"), lastMatchingAt: lastFinished(db, "matching") },
     stats,
     strongMatchScore: STRONG_MATCH_SCORE,
@@ -198,7 +220,48 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
       typeof r.application_id === "number"
         ? { id: r.application_id, status: r.application_status as ApplicationStatus }
         : null,
+    ...benefitView(db, r, preferences),
   }));
 
   return { hasProfile: true, ...base, topMatches };
+}
+
+const REQUIREMENT_LABELS = { ownVehicle: "Own vehicle needed", drivingLicence: "Driving licence needed", travel: "Travel required" } as const;
+
+/**
+ * Benefits and fit reasons for one match, from the advert's own stored text
+ * (deterministic, no model calls). Only what the text supports is claimed.
+ */
+function benefitView(
+  db: DB,
+  r: Record<string, unknown>,
+  preferences: SearchPreferences | null
+): Pick<DashboardMatch, "benefits" | "requirements" | "standsOut"> {
+  const title = r.title as string;
+  const report = detectBenefits({ title, description: getBestDescription(db, r.job_id as number)?.content ?? "" });
+  const benefits = benefitHighlights(report, preferences?.benefits ?? {});
+  const requirements = (Object.keys(REQUIREMENT_LABELS) as (keyof typeof REQUIREMENT_LABELS)[])
+    .filter((id) => report.requirements[id].present)
+    .map((id) => REQUIREMENT_LABELS[id]);
+
+  const standsOut: string[] = [];
+  if (preferences) {
+    for (const id of preferences.targetRoles) {
+      const category = roleCategory(id);
+      if (category && category.terms.some((term) => titleHasKeyword(title, term))) {
+        standsOut.push(`Matches your ${category.label} search`);
+        break;
+      }
+    }
+    const custom = preferences.searchTerms.find((term) => titleHasKeyword(title, term));
+    if (custom && standsOut.length === 0) standsOut.push(`Matches your “${custom}” search`);
+    const salary = knownAnnualSalary({ salaryMin: r.salary_min as number | null, salaryMax: r.salary_max as number | null, salaryIsPredicted: r.salary_is_predicted === 1 });
+    if (preferences.minSalary !== null && salary !== null && salary >= preferences.minSalary) {
+      standsOut.push(`Salary meets your £${preferences.minSalary.toLocaleString("en-GB")} minimum`);
+    }
+    for (const b of benefits) {
+      if (b.status === "confirmed" && b.priority) standsOut.push(`${b.label} — ${b.priority === "important" ? "important to you" : "on your wish list"}`);
+    }
+  }
+  return { benefits, requirements, standsOut };
 }

@@ -157,9 +157,57 @@ function Breakdown({ breakdown }: { breakdown: NonNullable<DashboardMatch["break
   );
 }
 
-/** Why a job fits: only the stored match explanation (strengths, reason, gaps). */
+/** Confirmed benefits only: never a positive claim the advert doesn't make. */
+function BenefitChips({ match, max }: { match: DashboardMatch; max: number }) {
+  const confirmed = match.benefits.filter((b) => b.status === "confirmed").slice(0, max);
+  if (confirmed.length === 0) return null;
+  return (
+    <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Benefits stated in the advert">
+      {confirmed.map((b) => (
+        <li
+          key={b.id}
+          title={b.evidence ?? undefined}
+          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${b.priority ? "bg-emerald-50 text-emerald-900 ring-emerald-600/25" : "bg-white text-slate-700 ring-slate-300"}`}
+        >
+          <span aria-hidden="true">✓</span>{b.label}{b.priority && <span className="sr-only"> (one of your preferences)</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What the advert says about benefits and what it asks of you, with its own words as evidence. */
+function BenefitDetails({ match }: { match: DashboardMatch }) {
+  if (match.benefits.length === 0 && match.requirements.length === 0) return null;
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-slate-900">Benefits in the advert</h4>
+      <ul className="mt-2 space-y-1.5 text-sm">
+        {match.benefits.map((b) => (
+          <li key={b.id} className="flex gap-2">
+            <span className={`w-4 shrink-0 text-center ${b.status === "confirmed" ? "text-emerald-600" : "text-amber-600"}`} aria-hidden="true">{b.status === "confirmed" ? "✓" : "?"}</span>
+            <span className="text-slate-700">
+              <span className="font-medium text-slate-900">{b.label}</span>
+              {b.status === "confirmed" ? <span className="sr-only"> (stated)</span> : <> — {b.note}</>}
+              {b.evidence && <span className="block text-slate-600">&ldquo;{b.evidence}&rdquo;</span>}
+            </span>
+          </li>
+        ))}
+        {match.requirements.map((r) => (
+          <li key={r} className="flex gap-2">
+            <span className="w-4 shrink-0 text-center text-slate-500" aria-hidden="true">•</span>
+            <span className="text-slate-700">{r}</span>
+          </li>
+        ))}
+      </ul>
+      {match.benefits.length === 0 && <p className="mt-1 text-sm text-slate-600">No benefits are stated in the advert text your agent has.</p>}
+    </div>
+  );
+}
+
+/** Why a job fits: only the stored match explanation (strengths, reason, gaps) and the advert's stated benefits. */
 function WhyDetails({ match, compact }: { match: DashboardMatch; compact?: boolean }) {
-  const hasAny = match.strengths.length > 0 || match.reason || match.missingSkills.length > 0;
+  const hasAny = match.strengths.length > 0 || match.reason || match.missingSkills.length > 0 || match.benefits.length > 0 || match.requirements.length > 0;
   if (!hasAny) return <p className="text-sm text-slate-600">No detailed explanation was saved for this match.</p>;
   return (
     <div className="space-y-4">
@@ -190,6 +238,7 @@ function WhyDetails({ match, compact }: { match: DashboardMatch; compact?: boole
           </p>
         </div>
       )}
+      <BenefitDetails match={match} />
     </div>
   );
 }
@@ -378,7 +427,7 @@ export default function CommandCentre() {
   const progress = stats ? progressGroups(stats.applicationsByStatus) : [];
   const greeting = hour === null ? "Welcome back" : greetingFor(hour);
   const lastSearched = timeAgo(dashboard?.agent.lastDiscoveryAt);
-  const searchTerms = dashboard?.search.terms ?? [];
+  const searchTerms = dashboard?.search.roles.length ? dashboard.search.roles : dashboard?.search.terms ?? [];
   const inProgress = prep ? prep.summary.preparing + prep.summary.queued : stats?.preparing ?? 0;
   const awaitingResponse = stats ? (stats.applicationsByStatus.submitted ?? 0) + (stats.applicationsByStatus.acknowledged ?? 0) : 0;
   const step = dashboard && stats
@@ -729,8 +778,20 @@ function FeaturedCard({ match, action, strong, onPrepare, notice, prepItem, isNe
               {source && <span>via {source}</span>}
               {found && <span>found {found}</span>}
             </div>
+            <BenefitChips match={match} max={4} />
           </div>
         </div>
+
+        {match.standsOut.length > 0 && (
+          <div className="mt-6 rounded-xl bg-emerald-50/60 p-4 ring-1 ring-inset ring-emerald-600/15">
+            <h3 className="text-sm font-semibold text-slate-900">Why this job stands out for you</h3>
+            <ul className="mt-2 grid gap-1 text-sm text-slate-800 sm:grid-cols-2">
+              {match.standsOut.map((reason) => (
+                <li key={reason} className="flex gap-2"><span className="text-emerald-600" aria-hidden="true">✓</span>{reason}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)]">
           <WhyDetails match={match} />
@@ -802,6 +863,7 @@ function FeedRow({ match, action, strong, onPrepare, notice, prepItem, selected,
             {match.location && <> · {match.location}</>}
             {salary && <> · <span className="font-medium text-slate-800">{salary}</span></>}
           </p>
+          <BenefitChips match={match} max={3} />
           {preparing && <p className="mt-1 text-sm font-medium text-sky-800">{progressLine(prepItem)}</p>}
           {match.strengths.length > 0 && (
             <ul className="mt-2 hidden flex-wrap gap-1.5 sm:flex xl:hidden" aria-label="Matching skills">

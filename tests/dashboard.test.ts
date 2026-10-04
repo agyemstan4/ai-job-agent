@@ -68,7 +68,7 @@ describe("3c: getDashboard", () => {
     assert.deepEqual(d.topMatches, []);
     assert.deepEqual(d.stats, { discoveredJobs: 1, scoredMatches: 0, strongMatches: 0, strongToday: 0, preparing: 0, needsReview: 0, readyToApply: 0, submitted: 0, applicationsByStatus: {} });
     assert.equal(d.firstName, null);
-    assert.deepEqual(d.search, { usingPreferences: false, location: "London", terms: ["junior software engineer", "graduate software developer", "android developer", "java developer", "frontend developer", "full stack developer"] });
+    assert.deepEqual(d.search, { usingPreferences: false, location: "London", terms: ["junior software engineer", "graduate software developer", "android developer", "java developer", "frontend developer", "full stack developer"], roles: [], minSalary: null, benefits: {} });
     assert.deepEqual(d.agent, { lastDiscoveryAt: null, lastMatchingAt: null });
     assert.equal(d.strongMatchScore, STRONG_MATCH_SCORE);
   });
@@ -239,7 +239,7 @@ describe("3c v2: dashboard data for the redesigned Command Centre", () => {
     recordMatch(t.db, { jobId: j, candidateProfileId: profileId, outcome: "scored", score: 81, breakdown: { technicalSkills: 90, experienceLevel: "70", projects: null, growthPotential: 85 } });
     const d = getDashboard(t.db);
     assert.equal(d.firstName, "Ada");
-    assert.deepEqual(d.search, { usingPreferences: true, location: "Leeds", terms: ["kotlin developer"] });
+    assert.deepEqual(d.search, { usingPreferences: true, location: "Leeds", terms: ["kotlin developer"], roles: [], minSalary: null, benefits: {} });
     assert.deepEqual(d.agent, { lastDiscoveryAt: "2026-10-01 09:01:00", lastMatchingAt: null });
     const top = d.topMatches[0];
     assert.deepEqual(top.breakdown, { technicalSkills: 90, experienceLevel: 70, projects: null, growthPotential: 85 });
@@ -273,7 +273,7 @@ const fake = (over: Partial<DashboardMatch>): DashboardMatch => ({
   matchId: 1, jobId: 1, score: 75, title: "Android Developer", company: "Mobi", location: "London", salaryMin: null, salaryMax: null,
   salaryIsPredicted: false, contractTime: null, contractType: null, url: null, sources: [], reason: null, strengths: ["Kotlin"],
   missingSkills: [], breakdown: null, postedAt: null, firstSeenAt: "2026-10-01 10:00:00", matchedAt: "2026-10-01 10:00:00",
-  promptVersion: "match/v3", application: null, ...over,
+  promptVersion: "match/v3", application: null, benefits: [], requirements: [], standsOut: [], ...over,
 });
 
 describe("3c v2: presentation helpers", () => {

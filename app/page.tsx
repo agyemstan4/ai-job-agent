@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import CommandCentre from "./components/CommandCentre";
+import type { SearchPreferences } from "@/lib/pipeline/preferences";
+import { roleGroups } from "@/lib/pipeline/careers";
+import { EMPTY_PREFERENCES_FORM, homeSearchSetup, loadPreferences, saveRawPreferences, searchPreview } from "@/lib/preferences-client";
 
 // The CV route names the file (and picks .pdf or the .docx fallback) in its
 // Content-Disposition header; fall back to a PDF-style name if it's missing.
@@ -30,23 +33,32 @@ export default function Home() {
   const [loadingStep, setLoadingStep] = useState("");
   const [coverLetters, setCoverLetters] = useState<Record<number, string>>({});
   const [generatingCoverLetter, setGeneratingCoverLetter] = useState<Record<number, boolean>>({});
-  const [selectedRoles, setSelectedRoles] = useState<string[]>(["Junior Software Engineer"]);
+  // What kind of work to search for: the saved preferences' categories,
+  // changed here if you like (saved as preferences when you search).
+  const [savedPrefs, setSavedPrefs] = useState<SearchPreferences | null>(null);
+  const [chosenRoles, setChosenRoles] = useState<string[]>([]);
   const [batchCount, setBatchCount] = useState(3);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState("");
   const [batchResults, setBatchResults] = useState<any[]>([]);
 
 
-  const roles = [
-    "Junior Software Engineer",
-    "Graduate Software Engineer",
-    "Android Developer",
-    "Frontend Developer",
-    "Backend Developer",
-    "Full Stack Developer",
-    "Java Developer",
-    "C# Developer",
-  ];
+  useEffect(() => {
+    let cancelled = false;
+    loadPreferences().then((result) => {
+      if (cancelled || result.kind !== "loaded" || !result.preferences) return;
+      setSavedPrefs(result.preferences);
+      setChosenRoles(result.preferences.targetRoles ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const ownSearches = savedPrefs?.searchTerms ?? [];
+  const homePreview = searchPreview({ ...EMPTY_PREFERENCES_FORM, targetRoles: chosenRoles, searchTerms: ownSearches.join("\n") });
+  // Saved categories all removed and no searches of your own: nothing valid to save.
+  const nothingToSearch = chosenRoles.length === 0 && ownSearches.length === 0 && (savedPrefs?.targetRoles ?? []).length > 0;
 
   const getMatchLabel = (score: number | undefined) => {
     if (score === undefined || score === null) return "No Score";
@@ -57,10 +69,8 @@ export default function Home() {
     return "Poor Match";
   };
 
-  const toggleRole = (role: string) => {
-    setSelectedRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
-    );
+  const toggleRole = (id: string) => {
+    setChosenRoles((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
   };
 
   async function generateCoverLetter(job: any, index: number) {
@@ -111,7 +121,8 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("cv", selectedFile);
-      formData.append("roles", JSON.stringify(selectedRoles));
+      const setup = homeSearchSetup(savedPrefs, chosenRoles);
+      formData.append("roles", JSON.stringify(setup.analysisRoles));
 
       setLoadingStep("Understanding your experience…");
 const combinedResponse = await fetch("/api/analyse-and-extract", {
@@ -136,12 +147,21 @@ if (combinedData.structuredCV) {
 }
       
 
+      // Kinds of work chosen here become your preferences (your profile exists now).
+      if (setup.save) {
+        const saved = await saveRawPreferences(setup.save);
+        if (saved.kind !== "saved") {
+          throw new Error(`Could not save what you're looking for: ${saved.message}`);
+        }
+        setSavedPrefs(saved.preferences);
+      }
+
       setLoadingStep("Searching for jobs…");
 
       const jobsResponse = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: selectedRoles[0], location: "London", candidateProfileId: profileId }),
+        body: JSON.stringify({ role: setup.role, location: "London", candidateProfileId: profileId }),
       });
 
       const jobsData = await jobsResponse.json();
@@ -502,25 +522,46 @@ if (combinedData.structuredCV) {
             <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70">
               <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">2</span>
-                Jobs you want
+                What kind of work?
               </p>
-              <p className="mt-2 text-sm text-slate-600">Pick the kinds of role you&rsquo;re interested in.</p>
-              <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Target roles">
-                {roles.map((role) => (
-                  <button
-                    key={role}
-                    onClick={() => toggleRole(role)}
-                    aria-pressed={selectedRoles.includes(role)}
-                    className={`min-h-9 rounded-full px-3.5 text-sm font-medium ring-1 ring-inset transition ${
-                      selectedRoles.includes(role)
-                        ? "bg-indigo-600 text-white ring-indigo-600"
-                        : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-100"
-                    }`}
-                  >
-                    {selectedRoles.includes(role) && <span aria-hidden="true">✓ </span>}{role}
-                  </button>
+              <p className="mt-2 text-sm text-slate-600">
+                Choose one or more — any career, not just the one on your CV.{" "}
+                <Link href="/preferences" className="font-medium text-indigo-700 underline-offset-2 hover:underline">More options</Link>
+              </p>
+              <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
+                {roleGroups().map(({ group, categories }) => (
+                  <div key={group} role="group" aria-label={group}>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-600">{group}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {categories.map((category) => {
+                        const on = chosenRoles.includes(category.id);
+                        return (
+                          <button
+                            key={category.id}
+                            type="button"
+                            onClick={() => toggleRole(category.id)}
+                            aria-pressed={on}
+                            className={`min-h-9 rounded-full px-3 text-sm font-medium ring-1 ring-inset transition ${
+                              on ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-100"
+                            }`}
+                          >
+                            {on && <span aria-hidden="true">✓ </span>}{category.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ))}
               </div>
+              <p className="mt-3 text-sm text-slate-700" aria-live="polite">
+                {homePreview.overLimit
+                  ? <span className="font-medium text-rose-800">Too many for one search — remove {homePreview.terms.length - homePreview.limit}.</span>
+                  : nothingToSearch
+                    ? <span className="font-medium text-rose-800">Choose at least one kind of work.</span>
+                    : chosenRoles.length === 0 && ownSearches.length === 0
+                      ? "Nothing chosen: your agent uses the default software search."
+                      : <>Searching for <span className="font-medium text-slate-900">{homePreview.terms.join(" · ")}</span>{savedPrefs ? ` in ${savedPrefs.location}` : " in London"}.</>}
+              </p>
             </div>
 
             {/* Find Jobs Button */}
@@ -533,7 +574,7 @@ if (combinedData.structuredCV) {
               <div className="mt-auto pt-4">
                 <button
                   onClick={analyseCV}
-                  disabled={loading}
+                  disabled={loading || homePreview.overLimit || nothingToSearch}
                   className="min-h-12 w-full rounded-xl bg-indigo-600 px-5 font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
                 >
                   {loading ? loadingStep : "Find Suitable Jobs"}

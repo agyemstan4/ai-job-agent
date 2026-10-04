@@ -49,6 +49,8 @@ const prefs = (overrides: Partial<SearchPreferences> = {}): SearchPreferences =>
   location: "Manchester",
   excludeKeywords: [],
   minSalary: null,
+  targetRoles: [],
+  benefits: {},
   ...overrides,
 });
 
@@ -103,16 +105,16 @@ describe("3b-5a: validatePreferences", () => {
   test("valid input is cleaned and stored with its version", () => {
     assert.deepEqual(
       ok({ searchTerms: ["  Kotlin   Developer ", "React developer"], location: " Leeds ", excludeKeywords: ["Senior", " Lead "], minSalary: 30000 }),
-      { version: 1, searchTerms: ["Kotlin Developer", "React developer"], location: "Leeds", excludeKeywords: ["Senior", "Lead"], minSalary: 30000 }
+      { version: 1, targetRoles: [], searchTerms: ["Kotlin Developer", "React developer"], location: "Leeds", excludeKeywords: ["Senior", "Lead"], minSalary: 30000, benefits: {} }
     );
   });
 
   test("exclude keywords and minimum salary are optional", () => {
     assert.deepEqual(ok({ searchTerms: ["Java developer"], location: "London" }), {
-      version: 1, searchTerms: ["Java developer"], location: "London", excludeKeywords: [], minSalary: null,
+      version: 1, targetRoles: [], searchTerms: ["Java developer"], location: "London", excludeKeywords: [], minSalary: null, benefits: {},
     });
     assert.equal(ok({ searchTerms: ["Java developer"], location: "London", minSalary: null }).minSalary, null);
-    assert.equal(ok({ version: 1, searchTerms: ["Java developer"], location: "London" }).version, 1);
+    assert.equal(ok({ version: 1, targetRoles: [], searchTerms: ["Java developer"], location: "London" }).version, 1);
   });
 
   test("duplicates are removed ignoring case", () => {
@@ -179,6 +181,7 @@ describe("3b-5a: searchPlan with preferences", () => {
       terms: ["Junior Software Engineer", "kotlin developer", "react developer"],
       location: "Manchester",
       usedPreferences: true,
+      roleLabels: [],
     });
   });
 
@@ -315,7 +318,7 @@ describe("3b-5a: GET/PUT /api/preferences handlers", () => {
   test("PUT saves valid preferences (cleaned), and GET returns them", () => {
     const c = createCandidate(t.db, { fullName: "A" });
     const result = putPreferences(t.db, { preferences: { searchTerms: [" Kotlin "], location: "Leeds", minSalary: 28000 } });
-    const saved = { version: 1, searchTerms: ["Kotlin"], location: "Leeds", excludeKeywords: [], minSalary: 28000 };
+    const saved = { version: 1, targetRoles: [], searchTerms: ["Kotlin"], location: "Leeds", excludeKeywords: [], minSalary: 28000, benefits: {} };
     assert.deepEqual(result, { status: 200, body: { preferences: saved } });
     assert.deepEqual(getPreferences(t.db).body, { preferences: saved });
     assert.deepEqual(getCandidate(t.db, c.id)?.preferences, saved);

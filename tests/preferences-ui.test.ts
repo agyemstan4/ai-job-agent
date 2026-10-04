@@ -35,13 +35,14 @@ describe("3b-5b: form helpers", () => {
     assert.deepEqual(linesToList(""), []);
   });
 
-  test("saved preferences fill the form; none gives an empty form", () => {
-    assert.deepEqual(formFromPreferences(null), EMPTY_PREFERENCES_FORM);
+  test("saved preferences fill the form; none gives a new form (London suggested)", () => {
+    // Since 3f a first-time form suggests the usual location.
+    assert.deepEqual(formFromPreferences(null), { ...EMPTY_PREFERENCES_FORM, location: "London" });
     assert.deepEqual(
-      formFromPreferences({ version: 1, searchTerms: ["Kotlin", "React"], location: "Leeds", excludeKeywords: ["Senior"], minSalary: 30000 }),
-      { searchTerms: "Kotlin\nReact", location: "Leeds", excludeKeywords: "Senior", minSalary: "30000" }
+      formFromPreferences({ version: 1, targetRoles: [], benefits: {}, searchTerms: ["Kotlin", "React"], location: "Leeds", excludeKeywords: ["Senior"], minSalary: 30000 }),
+      { targetRoles: [], benefits: {}, searchTerms: "Kotlin\nReact", location: "Leeds", excludeKeywords: "Senior", minSalary: "30000" }
     );
-    assert.equal(formFromPreferences({ version: 1, searchTerms: ["x y"], location: "York", excludeKeywords: [], minSalary: null }).minSalary, "");
+    assert.equal(formFromPreferences({ version: 1, targetRoles: [], benefits: {}, searchTerms: ["x y"], location: "York", excludeKeywords: [], minSalary: null }).minSalary, "");
   });
 
   test("minimum salary: empty is none; common formats become a number; anything else goes to the server", () => {
@@ -58,15 +59,15 @@ describe("3b-5b: form helpers", () => {
 
   test("the save request has the API's shape", () => {
     assert.deepEqual(
-      buildSaveRequest({ searchTerms: "Kotlin\n\nReact ", location: " Leeds ", excludeKeywords: "", minSalary: "" }),
-      { preferences: { searchTerms: ["Kotlin", "React"], location: "Leeds", excludeKeywords: [], minSalary: null } }
+      buildSaveRequest({ targetRoles: [], benefits: {}, searchTerms: "Kotlin\n\nReact ", location: " Leeds ", excludeKeywords: "", minSalary: "" }),
+      { preferences: { targetRoles: [], benefits: {}, searchTerms: ["Kotlin", "React"], location: "Leeds", excludeKeywords: [], minSalary: null } }
     );
     assert.deepEqual(CLEAR_REQUEST, { preferences: null });
   });
 
   test("field errors without a form field are listed separately", () => {
     assert.deepEqual(otherFieldErrors({ location: "x", roles: "Unknown field" }), ["roles: Unknown field"]);
-    assert.deepEqual(otherFieldErrors({ searchTerms: "x", minSalary: "y" }), []);
+    assert.deepEqual(otherFieldErrors({ targetRoles: "x", benefits: "x", searchTerms: "x", minSalary: "y" }), []);
   });
 });
 
@@ -99,7 +100,7 @@ describe("3b-5b: the page's load/save/clear against the real handlers", () => {
     const load = await loadPreferences(apiFetch);
     assert.equal(load.kind, "no_candidate");
     assert.match((load as { message: string }).message, /Upload your CV first/);
-    const save = await savePreferences({ searchTerms: "Kotlin", location: "Leeds", excludeKeywords: "", minSalary: "" }, apiFetch);
+    const save = await savePreferences({ targetRoles: [], benefits: {}, searchTerms: "Kotlin", location: "Leeds", excludeKeywords: "", minSalary: "" }, apiFetch);
     assert.equal(save.kind, "no_candidate");
     assert.equal(count(t.db, "candidates"), 0);
   });
@@ -112,24 +113,24 @@ describe("3b-5b: the page's load/save/clear against the real handlers", () => {
 
   test("save, then load again: the cleaned preferences fill the form", async () => {
     const c = createCandidate(t.db, { fullName: "A" });
-    const form = { searchTerms: " kotlin developer \nReact Native\nreact native\n", location: " Manchester ", excludeKeywords: "Senior\nLead", minSalary: "£30,000" };
+    const form = { targetRoles: [], benefits: {}, searchTerms: " kotlin developer \nReact Native\nreact native\n", location: " Manchester ", excludeKeywords: "Senior\nLead", minSalary: "£30,000" };
     const save = await savePreferences(form, apiFetch);
     assert.equal(save.kind, "saved");
-    const expected = { version: 1, searchTerms: ["kotlin developer", "React Native"], location: "Manchester", excludeKeywords: ["Senior", "Lead"], minSalary: 30000 };
+    const expected = { version: 1, targetRoles: [], benefits: {}, searchTerms: ["kotlin developer", "React Native"], location: "Manchester", excludeKeywords: ["Senior", "Lead"], minSalary: 30000 };
     assert.deepEqual((save as { preferences: unknown }).preferences, expected);
     assert.deepEqual(getCandidate(t.db, c.id)?.preferences, expected);
 
     const load = await loadPreferences(apiFetch);
     if (load.kind !== "loaded") assert.fail(`expected loaded, got ${load.kind}`);
     assert.deepEqual(formFromPreferences(load.preferences), {
-      searchTerms: "kotlin developer\nReact Native", location: "Manchester", excludeKeywords: "Senior\nLead", minSalary: "30000",
+      targetRoles: [], benefits: {}, searchTerms: "kotlin developer\nReact Native", location: "Manchester", excludeKeywords: "Senior\nLead", minSalary: "30000",
     });
     assert.deepEqual(calls.map((c) => c.method), ["PUT", "GET"]);
   });
 
   test("invalid input: field errors for each field, a summary message, and nothing saved", async () => {
     const c = createCandidate(t.db, { fullName: "A" });
-    const save = await savePreferences({ searchTerms: "", location: "x", excludeKeywords: "y", minSalary: "thirty" }, apiFetch);
+    const save = await savePreferences({ targetRoles: [], benefits: {}, searchTerms: "", location: "x", excludeKeywords: "y", minSalary: "thirty" }, apiFetch);
     assert.equal(save.kind, "invalid");
     const { fieldErrors, message } = save as { fieldErrors: Record<string, string>; message: string };
     assert.deepEqual(Object.keys(fieldErrors).sort(), ["excludeKeywords", "location", "minSalary", "searchTerms"]);
@@ -138,12 +139,12 @@ describe("3b-5b: the page's load/save/clear against the real handlers", () => {
   });
 
   test("clear: saved preferences are removed (SQL NULL) and the form empties", async () => {
-    const c = createCandidate(t.db, { fullName: "A", preferences: { version: 1, searchTerms: ["Kotlin"], location: "Leeds", excludeKeywords: [], minSalary: null } });
+    const c = createCandidate(t.db, { fullName: "A", preferences: { version: 1, targetRoles: [], benefits: {}, searchTerms: ["Kotlin"], location: "Leeds", excludeKeywords: [], minSalary: null } });
     const result = await clearPreferences(apiFetch);
     assert.deepEqual(result, { kind: "saved", preferences: null });
     assert.equal(storedRaw(c.id), null);
     assert.deepEqual(calls, [{ url: "/api/preferences", method: "PUT", body: { preferences: null } }]);
-    assert.deepEqual(formFromPreferences(null), EMPTY_PREFERENCES_FORM);
+    assert.deepEqual(formFromPreferences(null), { ...EMPTY_PREFERENCES_FORM, location: "London" });
   });
 
   test("invalid saved preferences: loaded as none, with the server's warning", async () => {
@@ -158,7 +159,7 @@ describe("3b-5b: the page's load/save/clear against the real handlers", () => {
     createCandidate(t.db, { fullName: "A" });
     const tables = (t.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]).map((r) => r.name);
     const before = tables.map((n) => count(t.db, n));
-    await savePreferences({ searchTerms: "Kotlin", location: "Leeds", excludeKeywords: "", minSalary: "" }, apiFetch);
+    await savePreferences({ targetRoles: [], benefits: {}, searchTerms: "Kotlin", location: "Leeds", excludeKeywords: "", minSalary: "" }, apiFetch);
     await clearPreferences(apiFetch);
     assert.deepEqual(tables.map((n) => count(t.db, n)), before);
   });
