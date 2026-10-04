@@ -6,6 +6,7 @@ import type { EmailClient, EmailCopy } from "../lib/email-copies.ts";
 import {
   coverLetterEmail,
   DEFAULT_RECIPIENT,
+  emailBlockedReason,
   emailCopiesEnabled,
   SENDER,
   sendEmailCopy,
@@ -146,5 +147,64 @@ describe("every email path goes through the opt-in", () => {
       // (The CV's own "email" field is data, not sending.)
       assert.doesNotMatch(source, /email-copies|sendEmailCopy|resend/i, file);
     }
+  });
+});
+
+// ── Safety guard: test and scratch runs can never send (incident audit after 1be5ce7) ──
+// Before 3bae0e1 the routes emailed unconditionally, and end-to-end tests on
+// scratch copies sent real emails. These tests make sure that, whatever
+// EMAIL_COPIES_ENABLED says, a test runner or a scratch database never sends.
+
+describe("email copies: never from tests or scratch runs", () => {
+  const LIVE = path.join(process.cwd(), ".data", "jobs.db");
+
+  test("a server on a scratch database is blocked even when enabled with a key; no client is created", async () => {
+    for (const dbPath of ["C:/Users/x/AppData/Local/Temp/scratch/jobs.db", "./scratch/jobs.db", "/tmp/acceptance/jobs.db"]) {
+      const fake = fakeClient();
+      const outcome = await quietly(() => sendEmailCopy(copy, { env: { ...ENABLED, JOB_AGENT_DB_PATH: dbPath }, createClient: fake.createClient }));
+      assert.equal(outcome, "blocked", dbPath);
+      assert.equal(fake.keys.length, 0, "no Resend client for a scratch database");
+      assert.equal(fake.sent.length, 0);
+    }
+  });
+
+  test("the live database (default or the same path given explicitly) is not blocked", () => {
+    assert.equal(emailBlockedReason({}, LIVE), null);
+    assert.equal(emailBlockedReason({ JOB_AGENT_DB_PATH: LIVE }, LIVE), null);
+    assert.equal(emailBlockedReason({ JOB_AGENT_DB_PATH: LIVE.toUpperCase() }, LIVE), null, "Windows paths ignore case");
+  });
+
+  test("a test runner or the explicit kill switch blocks sending", async () => {
+    for (const extra of [{ NODE_ENV: "test" }, { NODE_TEST_CONTEXT: "child-v8" }, { JOB_AGENT_NO_EMAIL: "1" }, { JOB_AGENT_NO_EMAIL: "true" }]) {
+      const fake = fakeClient();
+      assert.equal(await quietly(() => sendEmailCopy(copy, { env: { ...ENABLED, ...extra }, createClient: fake.createClient })), "blocked", JSON.stringify(extra));
+      assert.equal(fake.keys.length, 0);
+    }
+  });
+
+  test("this very test run (npm test) cannot send, even if the flag and a key were set", async () => {
+    // node --test marks its test processes (NODE_TEST_CONTEXT); the guard reads the real environment.
+    const fake = fakeClient();
+    const env = { ...process.env, EMAIL_COPIES_ENABLED: "true", RESEND_API_KEY: "re_should_never_be_used" };
+    assert.notEqual(emailBlockedReason(env), null);
+    assert.equal(await quietly(() => sendEmailCopy(copy, { env, createClient: fake.createClient })), "blocked");
+    assert.equal(fake.keys.length, 0);
+  });
+
+  test("disabled stays disabled first: without the flag nothing is even considered", async () => {
+    const fake = fakeClient();
+    assert.equal(await sendEmailCopy(copy, { env: { RESEND_API_KEY: "re_test", JOB_AGENT_DB_PATH: "/tmp/x.db" }, createClient: fake.createClient }), "disabled");
+    assert.equal(fake.keys.length, 0);
+  });
+
+  test("the only senders are the two legacy routes, and both go through the guarded sendEmailCopy", () => {
+    const root = path.join(import.meta.dirname, "..");
+    const files = (dir: string): string[] =>
+      (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).filter((f) => /\.(ts|tsx|mjs|js)$/.test(f)).map((f) => path.join(dir, f).replace(/\\/g, "/"));
+    const users = [...files("app"), ...files("lib"), ...files("scripts")].filter((f) => /sendEmailCopy|from ["']resend["']/.test(fs.readFileSync(path.join(root, f), "utf8")));
+    assert.deepEqual(users.sort(), ["app/api/cover-letter/route.ts", "app/api/generate-cv-docx/route.ts", "lib/email-copies.ts"]);
+    const lib = fs.readFileSync(path.join(root, "lib/email-copies.ts"), "utf8");
+    // The guard runs before any client can be created.
+    assert.ok(lib.indexOf("emailBlockedReason(env)") < lib.indexOf("options.createClient ?? defaultClient"));
   });
 });
