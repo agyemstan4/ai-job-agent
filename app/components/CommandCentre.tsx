@@ -276,13 +276,48 @@ function BenefitDetails({ match, withPreferences = true }: { match: DashboardMat
   );
 }
 
+/** Why a job is relevant to you (✓) and what is worth checking (!), from opportunity factors — never invented. */
+function OpportunityReasons({ match, title, showSummary }: { match: DashboardMatch; title: string; showSummary?: boolean }) {
+  if (match.standsOut.length === 0 && match.cautions.length === 0) return null;
+  return (
+    <div>
+      {match.standsOut.length > 0 && (
+        <>
+          <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
+          {showSummary && match.benefitSummary && <p className="mt-1 text-sm font-medium text-emerald-900">{match.benefitSummary}</p>}
+          <ul className="mt-2 space-y-1 text-sm text-slate-800">
+            {match.standsOut.map((reason) => (
+              <li key={reason} className="flex gap-2"><span className="w-3 shrink-0 text-center text-emerald-700" aria-hidden="true">✓</span>{reason}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {match.cautions.length > 0 && (
+        <>
+          <h4 className={`${match.standsOut.length > 0 ? "mt-3 " : ""}text-sm font-semibold text-slate-900`}>Worth checking</h4>
+          <ul className="mt-1.5 space-y-1 text-sm text-slate-800">
+            {match.cautions.map((text) => (
+              <li key={text} className="flex gap-2"><span className="w-3 shrink-0 text-center font-bold text-amber-700" aria-hidden="true">!</span><span><span className="sr-only">Check: </span>{text}</span></li>
+            ))}
+          </ul>
+        </>
+      )}
+      {match.opportunity.evidence.limited && (match.standsOut.length > 0 || match.cautions.length > 0) && (
+        <p className="mt-2 text-xs text-slate-600">Based on a short advert summary — some details may not be mentioned.</p>
+      )}
+    </div>
+  );
+}
+
 /** Why a job fits: only the stored match explanation (strengths, reason, gaps) and the advert's stated benefits. */
-function WhyDetails({ match, compact, withPreferences = true }: { match: DashboardMatch; compact?: boolean; withPreferences?: boolean }) {
+function WhyDetails({ match, compact, withPreferences = true, withReasons = true }: { match: DashboardMatch; compact?: boolean; withPreferences?: boolean; withReasons?: boolean }) {
   const hasAny =
-    match.strengths.length > 0 || match.reason || match.missingSkills.length > 0 || match.benefits.length > 0 || match.requirements.length > 0 || match.preferenceFit.length > 0;
+    match.strengths.length > 0 || match.reason || match.missingSkills.length > 0 || match.benefits.length > 0 || match.requirements.length > 0 || match.preferenceFit.length > 0 ||
+    match.standsOut.length > 0 || match.cautions.length > 0;
   if (!hasAny) return <p className="text-sm text-slate-600">No detailed explanation was saved for this match.</p>;
   return (
     <div className="space-y-4">
+      {withReasons && <OpportunityReasons match={match} title="Why it could suit you" />}
       {match.strengths.length > 0 && (
         <div>
           <h4 className="text-sm font-semibold text-slate-900">Why this job fits you</h4>
@@ -860,18 +895,10 @@ function FeaturedCard({ match, action, strong, onPrepare, notice, prepItem, isNe
         </div>
         <BenefitChips match={match} max={5} large />
 
-        {(match.standsOut.length > 0 || match.preferenceFit.length > 0) && (
+        {(match.standsOut.length > 0 || match.cautions.length > 0 || match.preferenceFit.length > 0) && (
           <div className="mt-6 grid gap-4 rounded-xl bg-emerald-50/50 p-4 ring-1 ring-inset ring-emerald-600/15 lg:grid-cols-2">
-            {match.standsOut.length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">Why this job stands out</h3>
-                {match.benefitSummary && <p className="mt-1 text-sm font-medium text-emerald-900">{match.benefitSummary}</p>}
-                <ul className="mt-2 space-y-1 text-sm text-slate-800">
-                  {match.standsOut.map((reason) => (
-                    <li key={reason} className="flex gap-2"><span className="text-emerald-700" aria-hidden="true">✓</span>{reason}</li>
-                  ))}
-                </ul>
-              </div>
+            {(match.standsOut.length > 0 || match.cautions.length > 0) && (
+              <OpportunityReasons match={match} title="Why this job stands out" showSummary />
             )}
             {match.preferenceFit.length > 0 && (
               <div>
@@ -883,7 +910,7 @@ function FeaturedCard({ match, action, strong, onPrepare, notice, prepItem, isNe
         )}
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)]">
-          <WhyDetails match={match} withPreferences={false} />
+          <WhyDetails match={match} withPreferences={false} withReasons={false} />
           {match.breakdown && (
             <div className="self-start rounded-xl bg-slate-50 p-4 ring-1 ring-inset ring-slate-200/70">
               <h3 className="mb-3 text-sm font-semibold text-slate-900">How you match</h3>

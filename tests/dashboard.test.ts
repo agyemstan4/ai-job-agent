@@ -273,7 +273,15 @@ const fake = (over: Partial<DashboardMatch>): DashboardMatch => ({
   matchId: 1, jobId: 1, score: 75, title: "Android Developer", company: "Mobi", location: "London", salaryMin: null, salaryMax: null,
   salaryIsPredicted: false, contractTime: null, contractType: null, url: null, sources: [], reason: null, strengths: ["Kotlin"],
   missingSkills: [], breakdown: null, postedAt: null, firstSeenAt: "2026-10-01 10:00:00", matchedAt: "2026-10-01 10:00:00",
-  promptVersion: "match/v3", application: null, benefits: [], requirements: [], standsOut: [], preferenceFit: [], benefitSummary: null, ...over,
+  promptVersion: "match/v3", application: null, benefits: [], requirements: [], standsOut: [], preferenceFit: [], benefitSummary: null, cautions: [],
+  opportunity: {
+    roleFit: { status: "not_applicable", via: null, direction: null },
+    locationFit: { status: "not_applicable", jobLocation: "London", preferred: null },
+    compensation: { status: "unavailable", meetsMinimum: null, minimum: null },
+    benefitFit: { items: [], distinctions: [] },
+    evidence: { source: "none", chars: 0, limited: true },
+  },
+  ...over,
 });
 
 describe("3c v2: presentation helpers", () => {

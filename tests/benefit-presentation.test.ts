@@ -129,11 +129,13 @@ describe("3g: why this job stands out (deterministic, evidence-based)", () => {
     prefer({ companyCar: "important", travelExpenses: "important", accommodation: "preferred" }, { minSalary: 35000 });
     job("Territory Manager", "Company car provided and a fuel card. All travel expenses paid.", 88, [36000, 40000]);
     const m = byTitle("Territory Manager");
+    // Wording since 3h (opportunity intelligence).
     assert.deepEqual(m.standsOut, [
-      "Territory Management is one of your target roles",
+      "Matches your Territory Management career direction",
+      "In your preferred location (London)",
       "Salary meets your £35,000 minimum",
       "Company car matches an important preference",
-      "Travel expenses paid matches an important preference",
+      "Travel expenses match an important preference",
     ]);
     assert.equal(m.benefitSummary, "Company car and travel expenses paid match two of your important preferences.");
     assert.deepEqual(fit(m), { companyCar: "confirmed", travelExpenses: "confirmed", accommodation: "not_stated" });
@@ -203,7 +205,7 @@ describe("3g: presentation (source checks)", () => {
 
   test("no model call, no new request: the view is computed from stored text on the server", () => {
     const dashboard = read("lib/pipeline/dashboard.ts");
-    assert.match(dashboard, /detectBenefits\(\{ title, description: getBestDescription\(db, r\.job_id as number\)\?\.content \?\? "" \}\)/);
+    assert.match(dashboard, /const description = getBestDescription\(db, r\.job_id as number\);\s*const report = detectBenefits\(\{ title, description: description\?\.content \?\? "" \}\);/);
     for (const source of [dashboard, ui]) {
       assert.equal(/ollama|localhost:11434|generate\(/i.test(source), false);
     }
