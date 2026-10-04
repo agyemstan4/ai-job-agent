@@ -2,14 +2,23 @@ import type { DB } from "../repositories/shared.ts";
 import { fromJson } from "../repositories/shared.ts";
 import { getCurrentProfile, getDefaultCandidate } from "../repositories/candidates.ts";
 import type { ApplicationStatus } from "../repositories/applications.ts";
+import { DEFAULT_SEARCH_TERMS, storedPreferences } from "./preferences.ts";
 
 // Phase 3 checkpoint 3c: the Command Centre data (GET /api/dashboard), read
 // only. Stats and the strongest current matches for the current CV profile,
 // with the job's details and any application already prepared for it.
+// Everything here is existing stored data — nothing is estimated or invented.
 
 export const STRONG_MATCH_SCORE = 70;
 export const DEFAULT_TOP_MATCHES = 20;
 export const MAX_TOP_MATCHES = 50;
+
+export type MatchBreakdown = {
+  technicalSkills: number | null;
+  experienceLevel: number | null;
+  projects: number | null;
+  growthPotential: number | null;
+};
 
 export type DashboardMatch = {
   matchId: number;
@@ -21,26 +30,45 @@ export type DashboardMatch = {
   salaryMin: number | null;
   salaryMax: number | null;
   salaryIsPredicted: boolean;
+  /** Adzuna's contract time ("full_time", "part_time") when known. */
+  contractTime: string | null;
+  /** "permanent" or "contract" when known. */
+  contractType: string | null;
   url: string | null;
   sources: string[];
   reason: string | null;
   strengths: string[];
   missingSkills: string[];
+  breakdown: MatchBreakdown | null;
   postedAt: string | null;
+  /** When this job was first discovered. */
+  firstSeenAt: string;
+  /** When this match was last scored. */
+  matchedAt: string;
   promptVersion: string | null;
   application: { id: number; status: ApplicationStatus } | null;
 };
 
 export type Dashboard = {
   hasProfile: boolean;
+  /** The candidate's first name, for the greeting (null if unknown). */
+  firstName: string | null;
+  /** What job discovery searches for: saved preferences, or the defaults. */
+  search: { usingPreferences: boolean; location: string; terms: string[] };
+  /** When the agent last finished a search and a matching run. */
+  agent: { lastDiscoveryAt: string | null; lastMatchingAt: string | null };
   stats: {
     discoveredJobs: number;
     scoredMatches: number;
     strongMatches: number;
+    /** Strong matches scored today (server's local date). */
+    strongToday: number;
     preparing: number;
     needsReview: number;
     readyToApply: number;
     submitted: number;
+    /** Every application by status (the existing state machine's statuses). */
+    applicationsByStatus: Partial<Record<ApplicationStatus, number>>;
   };
   strongMatchScore: number;
   topMatches: DashboardMatch[];
@@ -55,6 +83,30 @@ const asStrings = (value: unknown): string[] =>
         .filter((s): s is string => Boolean(s && s.trim()))
     : [];
 
+const scoreOrNull = (value: unknown): number | null => {
+  const v = Number(value);
+  return value === null || value === undefined || value === "" || !Number.isFinite(v) ? null : Math.round(v);
+};
+
+function asBreakdown(value: unknown): MatchBreakdown | null {
+  if (!value || typeof value !== "object") return null;
+  const b = value as Record<string, unknown>;
+  const result = {
+    technicalSkills: scoreOrNull(b.technicalSkills),
+    experienceLevel: scoreOrNull(b.experienceLevel),
+    projects: scoreOrNull(b.projects),
+    growthPotential: scoreOrNull(b.growthPotential),
+  };
+  return Object.values(result).some((v) => v !== null) ? result : null;
+}
+
+function lastFinished(db: DB, kind: string): string | null {
+  const row = db
+    .prepare("SELECT finished_at FROM pipeline_runs WHERE kind = ? AND status = 'completed' ORDER BY finished_at DESC LIMIT 1")
+    .get(kind) as { finished_at: string | null } | undefined;
+  return row?.finished_at ?? null;
+}
+
 export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboard {
   const limit =
     typeof options.limit === "number" && Number.isInteger(options.limit) && options.limit > 0
@@ -63,6 +115,10 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
 
   const candidate = getDefaultCandidate(db);
   const profile = candidate ? getCurrentProfile(db, candidate.id) : null;
+  const preferences = storedPreferences(candidate?.preferences ?? null);
+  const firstName = candidate?.fullName?.trim().split(/\s+/)[0] || null;
+
+  const byStatus = db.prepare("SELECT status, COUNT(*) n FROM applications GROUP BY status").all() as { status: ApplicationStatus; n: number }[];
 
   const stats = {
     discoveredJobs: n(db, "SELECT COUNT(*) n FROM jobs"),
@@ -70,18 +126,40 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
     strongMatches: profile
       ? n(db, "SELECT COUNT(*) n FROM matches WHERE candidate_profile_id = ? AND outcome = 'scored' AND score >= ?", profile.id, STRONG_MATCH_SCORE)
       : 0,
+    strongToday: profile
+      ? n(
+          db,
+          `SELECT COUNT(*) n FROM matches WHERE candidate_profile_id = ? AND outcome = 'scored' AND score >= ?
+             AND date(updated_at, 'localtime') = date('now', 'localtime')`,
+          profile.id,
+          STRONG_MATCH_SCORE
+        )
+      : 0,
     preparing: n(db, "SELECT COUNT(*) n FROM applications WHERE status = 'preparing'"),
     needsReview: n(db, "SELECT COUNT(*) n FROM applications WHERE status = 'ready_for_review'"),
     readyToApply: n(db, "SELECT COUNT(*) n FROM applications WHERE status = 'approved'"),
     submitted: n(db, "SELECT COUNT(*) n FROM applications WHERE submitted_at IS NOT NULL"),
+    applicationsByStatus: Object.fromEntries(byStatus.map((r) => [r.status, r.n])) as Partial<Record<ApplicationStatus, number>>,
   };
 
-  if (!profile) return { hasProfile: false, stats, strongMatchScore: STRONG_MATCH_SCORE, topMatches: [] };
+  const base = {
+    firstName,
+    search: preferences
+      ? { usingPreferences: true, location: preferences.location, terms: preferences.searchTerms }
+      : { usingPreferences: false, location: "London", terms: DEFAULT_SEARCH_TERMS },
+    agent: { lastDiscoveryAt: lastFinished(db, "discovery"), lastMatchingAt: lastFinished(db, "matching") },
+    stats,
+    strongMatchScore: STRONG_MATCH_SCORE,
+  };
+
+  if (!profile) return { hasProfile: false, ...base, topMatches: [] };
 
   const rows = db
     .prepare(
-      `SELECT m.id AS match_id, m.job_id, m.score, m.reason, m.strengths_json, m.missing_skills_json, m.prompt_version,
+      `SELECT m.id AS match_id, m.job_id, m.score, m.reason, m.strengths_json, m.missing_skills_json, m.breakdown_json,
+              m.prompt_version, m.updated_at AS matched_at,
               j.title, j.company, j.location, j.salary_min, j.salary_max, j.salary_is_predicted, j.posted_at,
+              j.contract_time, j.contract_type, j.first_seen_at,
               (SELECT url FROM job_listings l WHERE l.job_id = j.id AND l.url IS NOT NULL AND l.url <> ''
                  ORDER BY l.last_seen_at DESC, l.id DESC LIMIT 1) AS url,
               (SELECT GROUP_CONCAT(DISTINCT l.source_id) FROM job_listings l WHERE l.job_id = j.id) AS sources,
@@ -104,12 +182,17 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
     salaryMin: (r.salary_min as number | null) ?? null,
     salaryMax: (r.salary_max as number | null) ?? null,
     salaryIsPredicted: r.salary_is_predicted === 1,
+    contractTime: (r.contract_time as string | null) ?? null,
+    contractType: (r.contract_type as string | null) ?? null,
     url: (r.url as string | null) ?? null,
     sources: typeof r.sources === "string" ? r.sources.split(",").sort() : [],
     reason: (r.reason as string | null) ?? null,
     strengths: asStrings(fromJson(r.strengths_json as string | null)),
     missingSkills: asStrings(fromJson(r.missing_skills_json as string | null)).slice(0, 5),
+    breakdown: asBreakdown(fromJson(r.breakdown_json as string | null)),
     postedAt: (r.posted_at as string | null) ?? null,
+    firstSeenAt: r.first_seen_at as string,
+    matchedAt: r.matched_at as string,
     promptVersion: (r.prompt_version as string | null) ?? null,
     application:
       typeof r.application_id === "number"
@@ -117,5 +200,5 @@ export function getDashboard(db: DB, options: { limit?: unknown } = {}): Dashboa
         : null,
   }));
 
-  return { hasProfile: true, stats, strongMatchScore: STRONG_MATCH_SCORE, topMatches };
+  return { hasProfile: true, ...base, topMatches };
 }

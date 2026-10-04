@@ -456,31 +456,20 @@ if (combinedData.structuredCV) {
   }
 
   return (
-    <main className="min-h-screen bg-gray-100 p-8">
+    <main className="min-h-screen w-full min-w-0 px-4 py-6 sm:px-6 sm:py-10">
       <div className="mx-auto max-w-6xl">
 
-        <div className="flex items-center justify-between">
-          <h1 className="text-4xl font-bold text-gray-900">AI Job Agent</h1>
-          <div className="flex gap-2">
-            <a href="/review" className="rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-700">
-              📋 Review Queue
-            </a>
-            <a href="/applications" className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700">
-              🗂 Applications
-            </a>
-            <Link href="/preferences" className="rounded-lg bg-gray-800 px-4 py-2 font-semibold text-white hover:bg-gray-700">
-              ⚙️ Search preferences
-            </Link>
-          </div>
-        </div>
-        <p className="mt-2 text-gray-600">
-          Your job-search command centre: matches, preparation, review and tracking. You always submit applications yourself.
-        </p>
-
+        {/* Navigation (Home, Jobs, Review, Applications, Preferences) is in the app layout. */}
         <CommandCentre />
 
-        <h2 className="mt-10 text-2xl font-bold text-gray-900">Run a new search</h2>
-        <p className="text-sm text-gray-600">Upload your CV and let AI analyse it for suitable software jobs.</p>
+        <div id="search" className="mt-16 border-t border-slate-200 pt-10">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Find new jobs</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Upload your CV and run <strong>Find Suitable Jobs</strong>: your agent searches Adzuna and Reed using your{" "}
+            <Link href="/preferences" className="font-medium text-indigo-600 hover:text-indigo-500">search preferences</Link>, then scores every new match.
+            You always review and submit applications yourself.
+          </p>
+        </div>
 
         {/* CV Upload */}
         <div className="mt-6 rounded-xl bg-white p-6 text-gray-900 shadow">

@@ -229,10 +229,16 @@ describe("3b-5b: the /preferences page and the link from /", () => {
     assert.equal(/\bfetch\(/.test(page), false);
   });
 
-  test("the home page links to /preferences next to Review and Applications", () => {
+  test("Preferences is reachable from every page (app navigation) and from the home page", () => {
+    // Since the Command Centre v2 pass, navigation lives in the app layout.
+    const nav = read("app/components/AppNav.tsx");
+    const layout = read("app/layout.tsx");
+    assert.match(layout, /import AppNav from "\.\/components\/AppNav";/);
+    assert.match(layout, /<AppNav \/>/);
+    assert.match(nav, /\{ href: "\/preferences", label: "Preferences"/);
+    assert.ok(nav.indexOf('href: "/applications"') < nav.indexOf('href: "/preferences"'));
     assert.match(home, /import Link from "next\/link";/);
-    assert.match(home, /<Link href="\/preferences"[^>]*>\s*⚙️ Search preferences\s*<\/Link>/);
-    assert.ok(home.indexOf('href="/applications"') < home.indexOf('href="/preferences"'));
+    assert.match(home, /<Link href="\/preferences"/);
   });
 
   test("the page links back to /", () => {

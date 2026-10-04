@@ -5,7 +5,25 @@ import path from "node:path";
 import type { TestDb } from "./helpers.ts";
 import { freshDb, quietly } from "./helpers.ts";
 import { DEFAULT_TOP_MATCHES, getDashboard, MAX_TOP_MATCHES, STRONG_MATCH_SCORE } from "../lib/pipeline/dashboard.ts";
-import { actionFor, formatSalary, loadDashboard, requestPreparation, scoreBadge } from "../lib/dashboard-client.ts";
+import {
+  actionFor,
+  filterMatches,
+  formatSalary,
+  greetingFor,
+  loadDashboard,
+  newSinceLastVisit,
+  parseStoredTime,
+  pickFeatured,
+  progressGroups,
+  requestPreparation,
+  scoreBadge,
+  sourceLabel,
+  statusInfo,
+  timeAgo,
+  workArrangement,
+} from "../lib/dashboard-client.ts";
+import type { DashboardMatch } from "../lib/pipeline/dashboard.ts";
+import { putPreferences } from "../lib/pipeline/preferences.ts";
 import type { PrepareDeps } from "../lib/pipeline/prepare.ts";
 import { prepareApplication } from "../lib/pipeline/prepare.ts";
 import { createCandidate, createProfileVersion } from "../lib/repositories/candidates.ts";
@@ -48,7 +66,10 @@ describe("3c: getDashboard", () => {
     const d = getDashboard(t.db);
     assert.equal(d.hasProfile, false);
     assert.deepEqual(d.topMatches, []);
-    assert.deepEqual(d.stats, { discoveredJobs: 1, scoredMatches: 0, strongMatches: 0, preparing: 0, needsReview: 0, readyToApply: 0, submitted: 0 });
+    assert.deepEqual(d.stats, { discoveredJobs: 1, scoredMatches: 0, strongMatches: 0, strongToday: 0, preparing: 0, needsReview: 0, readyToApply: 0, submitted: 0, applicationsByStatus: {} });
+    assert.equal(d.firstName, null);
+    assert.deepEqual(d.search, { usingPreferences: false, location: "London", terms: ["junior software engineer", "graduate software developer", "android developer", "java developer", "frontend developer", "full stack developer"] });
+    assert.deepEqual(d.agent, { lastDiscoveryAt: null, lastMatchingAt: null });
     assert.equal(d.strongMatchScore, STRONG_MATCH_SCORE);
   });
 
@@ -205,46 +226,196 @@ describe("3c: loading and preparing against the real handlers", () => {
   });
 });
 
-describe("3c: the Command Centre on / (source checks)", () => {
+// ── Command Centre v2 (visual pass): extra existing data + presentation helpers ──
+
+describe("3c v2: dashboard data for the redesigned Command Centre", () => {
+  test("first name, saved search, agent timing, breakdown, contract and discovery dates", () => {
+    const profileId = seedProfile();
+    t.db.prepare("UPDATE candidates SET full_name = 'Ada Lovelace'").run();
+    putPreferences(t.db, { preferences: { searchTerms: ["kotlin developer"], location: "Leeds" } });
+    t.db.prepare("INSERT INTO pipeline_runs (kind, triggered_by, status, started_at, finished_at) VALUES ('discovery', 'ui', 'completed', '2026-10-01 09:00:00', '2026-10-01 09:01:00')").run();
+    const j = job();
+    t.db.prepare("UPDATE jobs SET contract_time = 'full_time', contract_type = 'permanent' WHERE id = ?").run(j);
+    recordMatch(t.db, { jobId: j, candidateProfileId: profileId, outcome: "scored", score: 81, breakdown: { technicalSkills: 90, experienceLevel: "70", projects: null, growthPotential: 85 } });
+    const d = getDashboard(t.db);
+    assert.equal(d.firstName, "Ada");
+    assert.deepEqual(d.search, { usingPreferences: true, location: "Leeds", terms: ["kotlin developer"] });
+    assert.deepEqual(d.agent, { lastDiscoveryAt: "2026-10-01 09:01:00", lastMatchingAt: null });
+    const top = d.topMatches[0];
+    assert.deepEqual(top.breakdown, { technicalSkills: 90, experienceLevel: 70, projects: null, growthPotential: 85 });
+    assert.equal(top.contractTime, "full_time");
+    assert.equal(top.contractType, "permanent");
+    assert.ok(parseStoredTime(top.firstSeenAt));
+    assert.ok(parseStoredTime(top.matchedAt));
+  });
+
+  test("strong matches today and applications by status", () => {
+    const profileId = seedProfile();
+    recordMatch(t.db, { jobId: job(), candidateProfileId: profileId, outcome: "scored", score: 80 });
+    const old = recordMatch(t.db, { jobId: job(), candidateProfileId: profileId, outcome: "scored", score: 90 });
+    t.db.prepare("UPDATE matches SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(old.id);
+    recordMatch(t.db, { jobId: job(), candidateProfileId: profileId, outcome: "scored", score: 40 });
+    createApplication(t.db, { jobId: job(), status: "ready_for_review" });
+    createApplication(t.db, { jobId: job(), status: "preparing" });
+    const d = getDashboard(t.db);
+    assert.equal(d.stats.strongToday, 1);
+    assert.deepEqual(d.stats.applicationsByStatus, { preparing: 1, ready_for_review: 1 });
+  });
+
+  test("no breakdown stored: null (the card hides that panel)", () => {
+    const profileId = seedProfile();
+    recordMatch(t.db, { jobId: job(), candidateProfileId: profileId, outcome: "scored", score: 60 });
+    assert.equal(getDashboard(t.db).topMatches[0].breakdown, null);
+  });
+});
+
+const fake = (over: Partial<DashboardMatch>): DashboardMatch => ({
+  matchId: 1, jobId: 1, score: 75, title: "Android Developer", company: "Mobi", location: "London", salaryMin: null, salaryMax: null,
+  salaryIsPredicted: false, contractTime: null, contractType: null, url: null, sources: [], reason: null, strengths: ["Kotlin"],
+  missingSkills: [], breakdown: null, postedAt: null, firstSeenAt: "2026-10-01 10:00:00", matchedAt: "2026-10-01 10:00:00",
+  promptVersion: "match/v3", application: null, ...over,
+});
+
+describe("3c v2: presentation helpers", () => {
+  test("greetingFor", () => {
+    assert.equal(greetingFor(8), "Good morning");
+    assert.equal(greetingFor(13), "Good afternoon");
+    assert.equal(greetingFor(20), "Good evening");
+    assert.equal(greetingFor(2), "Good evening");
+    assert.equal(greetingFor(5), "Good morning");
+    assert.equal(greetingFor(12), "Good afternoon");
+    assert.equal(greetingFor(18), "Good evening");
+  });
+
+  test("statusInfo covers every status of the existing state machine", () => {
+    for (const s of ["preparing", "preparation_failed", "ready_for_review", "approved", "rejected", "submitting", "submission_failed", "submitted", "acknowledged", "interviewing", "offer", "unsuccessful", "withdrawn"]) {
+      const info = statusInfo(s);
+      assert.ok(info && info.label && !info.label.includes("_"), s);
+    }
+    assert.equal(statusInfo("ready_for_review")?.label, "Ready for review");
+    assert.equal(statusInfo("submitted")?.label, "Applied");
+    assert.equal(statusInfo(null), null);
+  });
+
+  test("workArrangement and sourceLabel use only stored values", () => {
+    assert.equal(workArrangement("full_time", "permanent"), "Full-time · Permanent");
+    assert.equal(workArrangement(null, "contract"), "Contract");
+    assert.equal(workArrangement("part_time", null), "Part-time");
+    assert.equal(workArrangement(null, null), null);
+    assert.equal(sourceLabel(["adzuna", "reed"]), "Adzuna + Reed");
+    assert.equal(sourceLabel([]), null);
+  });
+
+  test("timeAgo / parseStoredTime (SQLite UTC and ISO)", () => {
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    assert.equal(parseStoredTime("2026-10-04 11:00:00"), Date.parse("2026-10-04T11:00:00Z"));
+    assert.equal(timeAgo("2026-10-04 11:59:40", now), "just now");
+    assert.equal(timeAgo("2026-10-04T11:55:00.000Z", now), "5 minutes ago");
+    assert.equal(timeAgo("2026-10-04 09:00:00", now), "3 hours ago");
+    assert.equal(timeAgo("2026-10-03 11:00:00", now), "yesterday");
+    assert.equal(timeAgo("2026-09-30 12:00:00", now), "4 days ago");
+    assert.equal(timeAgo(null, now), null);
+    assert.equal(timeAgo("not a date", now), null);
+  });
+
+  test("pickFeatured: the strongest match still worth acting on", () => {
+    const list = [
+      fake({ matchId: 1, score: 90, application: { id: 1, status: "submitted" } }),
+      fake({ matchId: 2, score: 85, application: { id: 2, status: "ready_for_review" } }),
+      fake({ matchId: 3, score: 80 }),
+    ];
+    assert.equal(pickFeatured(list)?.matchId, 2);
+    assert.equal(pickFeatured([fake({ score: 90, application: { id: 1, status: "offer" } })]), null);
+    assert.equal(pickFeatured([]), null);
+  });
+
+  test("filterMatches: views and free text", () => {
+    const list = [
+      fake({ matchId: 1, score: 85, title: "Kotlin Engineer" }),
+      fake({ matchId: 2, score: 55, title: "QA", strengths: ["Selenium"], application: { id: 9, status: "ready_for_review" } }),
+      fake({ matchId: 3, score: 72, company: "Acme", application: { id: 8, status: "submitted" } }),
+    ];
+    assert.deepEqual(filterMatches(list, "all", "").map((x) => x.matchId), [1, 2, 3]);
+    assert.deepEqual(filterMatches(list, "strong", "").map((x) => x.matchId), [1, 3]);
+    assert.deepEqual(filterMatches(list, "todo", "").map((x) => x.matchId), [1]);
+    assert.deepEqual(filterMatches(list, "in_progress", "").map((x) => x.matchId), [2]);
+    assert.deepEqual(filterMatches(list, "all", "selenium").map((x) => x.matchId), [2]);
+    assert.deepEqual(filterMatches(list, "all", " ACME ").map((x) => x.matchId), [3]);
+  });
+
+  test("newSinceLastVisit: none on a first visit; only jobs first seen after the last visit", () => {
+    const list = [fake({ matchId: 1, firstSeenAt: "2026-10-01 10:00:00" }), fake({ matchId: 2, firstSeenAt: "2026-10-03 10:00:00" })];
+    assert.deepEqual(newSinceLastVisit(list, null), []);
+    assert.deepEqual(newSinceLastVisit(list, Date.parse("2026-10-02T00:00:00Z")).map((x) => x.matchId), [2]);
+  });
+
+  test("progressGroups: only non-empty groups", () => {
+    assert.deepEqual(progressGroups({}), []);
+    assert.deepEqual(progressGroups({ ready_for_review: 2, submitted: 1, acknowledged: 1, rejected: 3 }).map((g) => `${g.label}:${g.count}`), ["To review:2", "Applied:2"]);
+  });
+});
+
+// ── Source checks: the redesigned page, component and navigation ──
+
+describe("3c v2: Command Centre, navigation and home page (source checks)", () => {
   const component = read("app/components/CommandCentre.tsx");
+  const nav = read("app/components/AppNav.tsx");
+  const layout = read("app/layout.tsx");
   const page = read("app/page.tsx");
   const client = read("lib/dashboard-client.ts");
 
-  test("the home page renders the Command Centre above the existing search tools", () => {
+  test("the home page renders the Command Centre above the existing search tools (#search)", () => {
     assert.match(page, /import CommandCentre from "\.\/components\/CommandCentre";/);
-    assert.ok(page.indexOf("<CommandCentre />") > 0 && page.indexOf("<CommandCentre />") < page.indexOf("{/* CV Upload */}"));
+    const cc = page.indexOf("<CommandCentre />");
+    assert.ok(cc > 0 && cc < page.indexOf('id="search"') && page.indexOf('id="search"') < page.indexOf("{/* CV Upload */}"));
     assert.match(page, /<Link href="\/preferences"/);
-    assert.match(page, /href="\/review"/);
-    assert.match(page, /href="\/applications"/);
   });
 
-  test("loads on open; loading, empty, error and retry states; stats and ranked matches", () => {
+  test("greeting, agent status, discovery control, featured opportunity, feed: from loaded data", () => {
     assert.ok(component.startsWith('"use client";'));
     assert.match(component, /useEffect\(\(\) => \{\s*let cancelled = false;\s*loadDashboard\(\)\.then/);
-    for (const text of ["Loading your dashboard…", "Try again", "No CV profile yet", "No scored matches yet", "Jobs discovered", "Need your review", "Applied", "Top matches"]) {
+    for (const text of ["Let&rsquo;s find your next move.", "Find new jobs", "Edit preferences", "Recommended for you", "Why this job fits you", "Your advantage", "Potential gap", "How you match", "Your opportunities", "Your progress", "New since your last visit", "Strong matches today", "Waiting for your review", "Ready to apply", "Try again", "No CV profile yet", "No scored matches yet"]) {
       assert.ok(component.includes(text), text);
     }
-    for (const field of ["match.title", "match.company", "match.location", "formatSalary(", "match.strengths", "match.reason", "scoreBadge("]) {
-      assert.ok(component.includes(field), field);
-    }
+    assert.match(component, /dashboard\?\.firstName \? `, \$\{dashboard\.firstName\}` : ""/);
   });
 
-  test("actions: View Job (new tab, no opener), Prepare Application (one at a time), Review, Track", () => {
-    assert.match(component, /href=\{match\.url\} target="_blank" rel="noopener noreferrer"/);
-    assert.match(component, /onClick=\{\(\) => prepare\(match\)\} disabled=\{busyElsewhere\}/);
-    assert.match(component, /<Link href="\/review"[^>]*>Review Application<\/Link>/);
-    assert.match(component, /<Link href="\/applications"[^>]*>Track<\/Link>/);
+  test("retention sections only render with real data", () => {
+    assert.match(component, /\{fresh\.length > 0 && \(/);
+    assert.match(component, /\{stats\.strongToday > 0 && \(/);
+    assert.match(component, /\{stats\.needsReview > 0 && \(/);
+    assert.match(component, /\{stats\.readyToApply > 0 && \(/);
+    assert.match(component, /\{progress\.length > 0 && \(/);
+    assert.match(component, /window\.localStorage\.getItem\(LAST_VISIT_KEY\)/);
+  });
+
+  test("actions: one next action per job; Prepare one at a time; Review/Track link to existing pages; View Job opens a new tab", () => {
+    assert.match(component, /case "prepare":[\s\S]*onClick=\{onPrepare\} disabled=\{disabled\}/);
+    assert.match(component, /case "review":\s*return <Link href="\/review"[^>]*>Review Application<\/Link>/);
+    assert.match(component, /case "apply":\s*return <Link href="\/applications"/);
+    assert.match(component, /case "track":\s*return <Link href="\/applications"[^>]*>Track<\/Link>/);
+    assert.match(component, /busyElsewhere=\{preparingId !== null && preparingId !== match\.matchId\}/);
+    assert.match(component, /href=\{url\} target="_blank" rel="noopener noreferrer"/);
+    assert.match(component, /await requestPreparation\(match\.matchId\)/);
+  });
+
+  test("navigation: existing routes only, top bar on desktop, bottom tab bar on mobile, in the layout", () => {
+    assert.match(layout, /<AppNav \/>/);
+    const hrefs = [...nav.matchAll(/href: "([^"]+)"/g)].map((x) => x[1]);
+    assert.deepEqual(hrefs, ["/", "/#jobs", "/review", "/applications", "/preferences"]);
+    assert.match(nav, /className="hidden items-center gap-1 md:flex"/);
+    assert.match(nav, /fixed inset-x-0 bottom-0 z-40[^"]*md:hidden/);
+    assert.match(layout, /pb-20 md:pb-0/);
   });
 
   test("nothing on the Command Centre approves, submits, emails or opens windows", () => {
-    for (const source of [component, client]) {
+    for (const source of [component, client, nav]) {
       for (const forbidden of ["window.open", "mark_submitted", "approveApplication", "resend", "sendEmail", "/api/match", "/api/jobs", "PATCH"]) {
         assert.equal(source.includes(forbidden), false, forbidden);
       }
-      // No approve action is sent (the word may appear in text, e.g. "approved and ready to apply").
       assert.doesNotMatch(source, /action:\s*["']approve["']/);
     }
-    assert.deepEqual([...client.matchAll(/fetchImpl\("([^"]+)"/g)].map((m) => m[1]).sort(), ["/api/applications/prepare", "/api/dashboard"]);
+    assert.deepEqual([...client.matchAll(/fetchImpl\("([^"]+)"/g)].map((x) => x[1]).sort(), ["/api/applications/prepare", "/api/dashboard"]);
   });
 
   test("the dashboard route is thin and read-only", () => {
