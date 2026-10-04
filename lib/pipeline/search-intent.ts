@@ -266,10 +266,15 @@ export function intentToPreferences(intent: SearchIntent, saved: SearchPreferenc
   const location = intent.location && !removed.has("location") ? intent.location.value : saved?.location ?? "London";
   if (!(intent.location && !removed.has("location"))) kept.push(saved ? `your location (${saved.location})` : "the usual location (London)");
 
-  const salary = intent.salary && !removed.has("salary") ? intent.salary.min : saved?.minSalary ?? null;
-  if (!(intent.salary && !removed.has("salary")) && saved?.minSalary != null) kept.push(`your £${saved.minSalary.toLocaleString("en-GB")} minimum salary`);
+  // Saved values the request doesn't mention are used, unless left out for this search ("saved:…" keys).
+  const savedSalary = removed.has("saved:salary") ? null : saved?.minSalary ?? null;
+  const salary = intent.salary && !removed.has("salary") ? intent.salary.min : savedSalary;
+  if (!(intent.salary && !removed.has("salary")) && savedSalary != null) kept.push(`your £${savedSalary.toLocaleString("en-GB")} minimum salary`);
 
-  const benefits: Partial<Record<BenefitId, BenefitPriority>> = { ...(saved?.benefits ?? {}) };
+  const benefits: Partial<Record<BenefitId, BenefitPriority>> = {};
+  for (const [id, priority] of Object.entries(saved?.benefits ?? {}) as [BenefitId, BenefitPriority][]) {
+    if (!removed.has(`saved:benefit:${id}`)) benefits[id] = priority;
+  }
   if (Object.keys(benefits).length > 0) kept.push("your saved benefit preferences");
   for (const b of intent.benefits) if (!removed.has(`benefit:${b.id}`)) benefits[b.id] = b.priority;
 
@@ -277,4 +282,40 @@ export function intentToPreferences(intent: SearchIntent, saved: SearchPreferenc
     preferences: { targetRoles, searchTerms, location, excludeKeywords: saved?.excludeKeywords ?? [], minSalary: salary, benefits },
     kept,
   };
+}
+
+export type SavedItem = {
+  /** "saved:salary", "saved:benefit:<id>"… — removable ones can be left out of this search. */
+  key: string;
+  label: string;
+  value: string;
+  removable: boolean;
+};
+
+/**
+ * The saved preferences this search will also use because the request didn't
+ * mention them, as concrete values — kept apart from what the user asked for.
+ */
+export function savedPreferenceItems(intent: SearchIntent, saved: SearchPreferences | null, removed: ReadonlySet<string> = new Set()): SavedItem[] {
+  const items: SavedItem[] = [];
+  const askedRoles = intent.roles.some((r) => !removed.has(`role:${r.id}`)) || intent.ownSearches.some((s) => !removed.has(`own:${s}`));
+  if (!askedRoles && saved && (saved.targetRoles.length || saved.searchTerms.length)) {
+    const names = [...saved.targetRoles.map((id) => roleCategory(id)?.label ?? id), ...saved.searchTerms.map((s) => `“${s}”`)];
+    items.push({ key: "saved:roles", label: "Kinds of work", value: names.join(", "), removable: false });
+  }
+  if (!(intent.location && !removed.has("location"))) {
+    items.push({ key: "saved:location", label: "Location", value: saved ? saved.location : "London (the usual default)", removable: false });
+  }
+  if (!(intent.salary && !removed.has("salary")) && saved?.minSalary != null && !removed.has("saved:salary")) {
+    items.push({ key: "saved:salary", label: "Minimum salary", value: `£${saved.minSalary.toLocaleString("en-GB")}`, removable: true });
+  }
+  const asked = new Set(intent.benefits.filter((b) => !removed.has(`benefit:${b.id}`)).map((b) => b.id));
+  for (const [id, priority] of Object.entries(saved?.benefits ?? {}) as [BenefitId, BenefitPriority][]) {
+    if (asked.has(id) || removed.has(`saved:benefit:${id}`)) continue;
+    items.push({ key: `saved:benefit:${id}`, label: "Benefit", value: `${BENEFIT_LABEL.get(id) ?? id} — ${priority === "important" ? "Important" : "Nice to have"}`, removable: true });
+  }
+  if (saved && saved.excludeKeywords.length > 0) {
+    items.push({ key: "saved:exclude", label: "Skipping job titles with", value: saved.excludeKeywords.join(", "), removable: false });
+  }
+  return items;
 }

@@ -192,6 +192,7 @@ export default function PreferencesPage() {
                     : "Nothing is saved yet: job searches use the default software roles and London. Pick what you want below — only the first step is needed."}
                 </p>
 
+                <div className="rounded-xl bg-indigo-50/60 p-4 ring-1 ring-inset ring-indigo-100 sm:p-5">
                 <DescribeSearch
                   saved={saved}
                   applyLabel="Fill in the form"
@@ -208,6 +209,7 @@ export default function PreferencesPage() {
                     setMessage({ kind: "info", text: "The form below is filled in from your request. Check it, then press Save preferences." });
                   }}
                 />
+                </div>
 
                 {/* 1. Kind of work */}
                 <Step number={1} title="What kind of work are you looking for?" hint="Choose as many as you like, or add your own. You can change direction whenever you want.">

@@ -116,7 +116,7 @@ export default function Home() {
     }
 
     setLoading(true);
-    setLoadingStep("Reading your CV…");
+    setLoadingStep("Analysing your CV…");
     setAnalysis(null);
     setCandidateProfileId(null);
     setMatches(null);
@@ -129,7 +129,7 @@ export default function Home() {
       const setup = homeSearchSetup(savedPrefs, chosenRoles, request);
       formData.append("roles", JSON.stringify(setup.analysisRoles));
 
-      setLoadingStep("Understanding your experience…");
+      setLoadingStep("Analysing your CV…");
 const combinedResponse = await fetch("/api/analyse-and-extract", {
   method: "POST",
   body: formData,
@@ -161,7 +161,7 @@ if (combinedData.structuredCV) {
         setSavedPrefs(saved.preferences);
       }
 
-      setLoadingStep("Searching for jobs…");
+      setLoadingStep("Searching job sites…");
 
       const jobsResponse = await fetch("/api/jobs", {
         method: "POST",
@@ -196,7 +196,7 @@ if (combinedData.structuredCV) {
         created: job.created,
       }));
 
-      setLoadingStep("Ranking the best matches…");
+      setLoadingStep("Matching your experience to the jobs found…");
 
       const matchResponse = await fetch("/api/match", {
         method: "POST",
@@ -496,7 +496,8 @@ if (combinedData.structuredCV) {
             You always review and submit applications yourself.
           </p>
 
-          <div className="mt-6">
+          {/* The main way to search: describe it in your own words */}
+          <div className="mt-6 rounded-2xl bg-indigo-50/60 p-4 ring-1 ring-inset ring-indigo-100 sm:p-6">
             <DescribeSearch
               saved={savedPrefs}
               applyLabel="Use this search"
@@ -507,44 +508,68 @@ if (combinedData.structuredCV) {
             />
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
             {/* CV Upload */}
-            <div className="flex flex-col rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70">
-              <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">1</span>
-                Your CV
-              </p>
-              <p className="mt-2 text-sm text-slate-600">Upload your CV as a PDF. Your agent reads it to understand your skills and experience.</p>
-              <div className="mt-auto pt-4">
-                <label className="inline-flex min-h-11 cursor-pointer items-center rounded-lg bg-slate-900 px-5 text-sm font-semibold text-white focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-indigo-600 hover:bg-slate-700">
-                  {selectedFile ? "Choose a different CV" : "Upload CV"}
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    className="sr-only"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) setSelectedFile(file);
-                    }}
-                  />
-                </label>
+            <div className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70 sm:flex-row sm:items-center sm:justify-between lg:flex-col lg:items-start">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">Your CV</p>
+                <p className="mt-1 text-sm text-slate-600">A PDF of your CV. Your agent reads it to match jobs to your experience.</p>
                 {selectedFile && (
-                  <p className="mt-3 text-sm font-medium text-emerald-800"><span aria-hidden="true">✓ </span>{selectedFile.name}</p>
+                  <p className="mt-2 break-all text-sm font-medium text-emerald-800"><span aria-hidden="true">✓ </span>{selectedFile.name}</p>
                 )}
               </div>
+              <label className="inline-flex min-h-11 shrink-0 cursor-pointer items-center rounded-lg bg-slate-900 px-5 text-sm font-semibold text-white focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-indigo-600 hover:bg-slate-700">
+                {selectedFile ? "Choose a different CV" : "Upload CV"}
+                <input
+                  type="file"
+                  accept=".pdf"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setSelectedFile(file);
+                  }}
+                />
+              </label>
             </div>
 
-            {/* Target Roles */}
-            <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-inset ring-slate-200/70">
-              <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">2</span>
-                What kind of work?
+            {/* Find Jobs Button */}
+            <div className="flex flex-col rounded-2xl bg-white p-5 ring-1 ring-inset ring-indigo-200">
+              <p className="text-sm font-semibold text-slate-900">Ready to search</p>
+              <p className="mt-1 text-sm text-slate-700" aria-live="polite">
+                {homePreview.overLimit
+                  ? <span className="font-medium text-rose-800">Too many kinds of work for one search — remove {homePreview.terms.length - homePreview.limit}.</span>
+                  : nothingToSearch
+                    ? <span className="font-medium text-rose-800">Choose at least one kind of work.</span>
+                    : chosenRoles.length === 0 && ownSearches.length === 0
+                      ? "Nothing chosen yet: your agent will use the default software search."
+                      : <>Your agent will look for <span className="font-medium text-slate-900">{homePreview.terms.join(" · ")}</span>{` in ${searchLocation}`}.</>}
               </p>
-              <p className="mt-2 text-sm text-slate-600">
+              <button
+                onClick={analyseCV}
+                disabled={loading || homePreview.overLimit || nothingToSearch}
+                className="mt-4 min-h-12 w-full rounded-xl bg-indigo-600 px-5 font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
+              >
+                {loading ? loadingStep : "Find Suitable Jobs"}
+              </button>
+              <p className="mt-2 text-sm text-slate-600" aria-live="polite">{loading ? "This can take a few minutes — you can keep browsing this page." : request ? (selectedFile ? "Your search is ready — press Find Suitable Jobs when you want your agent to search." : "Your search is ready. Upload your CV, then press Find Suitable Jobs.") : selectedFile ? "Your agent analyses your CV, searches job sites and finds your strongest matches." : "Upload your CV first."}</p>
+            </div>
+          </div>
+
+          {/* Target Roles */}
+          <details className="group mt-4 rounded-2xl bg-slate-50 ring-1 ring-inset ring-slate-200/70">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 [&::-webkit-details-marker]:hidden">
+              <span className="text-sm">
+                <span className="font-semibold text-slate-900">Prefer to choose manually?</span>{" "}
+                <span className="text-slate-600">Pick kinds of work from a list{chosenRoles.length > 0 ? ` (${chosenRoles.length} chosen)` : ""}.</span>
+              </span>
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-5 w-5 shrink-0 text-slate-500 transition-transform group-open:rotate-180"><path fillRule="evenodd" d="M5.2 7.2a.75.75 0 0 1 1.06.04L10 11.2l3.74-3.96a.75.75 0 1 1 1.09 1.03l-4.28 4.53a.75.75 0 0 1-1.09 0L5.17 8.27a.75.75 0 0 1 .04-1.06z" clipRule="evenodd" /></svg>
+            </summary>
+            <div className="px-5 pb-5">
+              <p className="text-sm text-slate-600">
                 Choose one or more — any career, not just the one on your CV.{" "}
                 <Link href="/preferences" className="font-medium text-indigo-700 underline-offset-2 hover:underline">More options</Link>
               </p>
-              <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {roleGroups().map(({ group, categories }) => (
                   <div key={group} role="group" aria-label={group}>
                     <p className="text-xs font-medium uppercase tracking-wide text-slate-600">{group}</p>
@@ -569,36 +594,8 @@ if (combinedData.structuredCV) {
                   </div>
                 ))}
               </div>
-              <p className="mt-3 text-sm text-slate-700" aria-live="polite">
-                {homePreview.overLimit
-                  ? <span className="font-medium text-rose-800">Too many for one search — remove {homePreview.terms.length - homePreview.limit}.</span>
-                  : nothingToSearch
-                    ? <span className="font-medium text-rose-800">Choose at least one kind of work.</span>
-                    : chosenRoles.length === 0 && ownSearches.length === 0
-                      ? "Nothing chosen: your agent uses the default software search."
-                      : <>Searching for <span className="font-medium text-slate-900">{homePreview.terms.join(" · ")}</span>{` in ${searchLocation}`}.</>}
-              </p>
             </div>
-
-            {/* Find Jobs Button */}
-            <div className="flex flex-col rounded-2xl bg-indigo-50/70 p-5 ring-1 ring-inset ring-indigo-200/70">
-              <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white" aria-hidden="true">3</span>
-                Search
-              </p>
-              <p className="mt-2 text-sm text-slate-600">Your agent reads your CV, searches for jobs and ranks the best matches. This can take a few minutes.</p>
-              <div className="mt-auto pt-4">
-                <button
-                  onClick={analyseCV}
-                  disabled={loading || homePreview.overLimit || nothingToSearch}
-                  className="min-h-12 w-full rounded-xl bg-indigo-600 px-5 font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
-                >
-                  {loading ? loadingStep : "Find Suitable Jobs"}
-                </button>
-                <p className="mt-2 text-center text-sm text-slate-600" aria-live="polite">{loading ? "Working… you can keep browsing this page." : request ? (selectedFile ? "Your search is ready — press Find Suitable Jobs when you want your agent to search." : "Your search is ready. Upload your CV, then press Find Suitable Jobs.") : selectedFile ? "Ready when you are." : "Upload your CV first."}</p>
-              </div>
-            </div>
-          </div>
+          </details>
         </section>
 
         {/* Analysis + Job Cards */}

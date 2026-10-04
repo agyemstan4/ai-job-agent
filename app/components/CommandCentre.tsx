@@ -615,7 +615,8 @@ export default function CommandCentre() {
               Looking for <span className="font-medium text-slate-800">{searchTerms.slice(0, 2).join(" · ")}{searchTerms.length > 2 ? ` · +${searchTerms.length - 2} more` : ""}</span> in{" "}
               <span className="font-medium text-slate-800">{dashboard.search.location}</span>
               {dashboard.search.usingPreferences ? "" : " (default search)"} ·{" "}
-              <Link href="/preferences" className="font-medium text-indigo-700 underline-offset-2 hover:underline">Edit preferences</Link>
+              <Link href="/preferences" className="font-medium text-indigo-700 underline-offset-2 hover:underline">Edit preferences</Link> ·{" "}
+              <a href="#search" className="font-medium text-indigo-700 underline-offset-2 hover:underline">Describe a new search</a>
             </p>
             <p className="text-slate-500">Your agent searches several job sites for you.</p>
           </div>
