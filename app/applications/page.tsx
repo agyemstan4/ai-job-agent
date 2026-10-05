@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import ApplicationsTabs from "@/app/components/ApplicationsTabs";
+import DownloadFileButton from "@/app/components/DownloadFileButton";
 import type { ReviewItem } from "@/lib/repositories/review";
 import {
   buildMarkSubmittedRequest,
@@ -224,13 +225,13 @@ function ApprovedAssets({ item }: { item: ReviewItem }) {
       </h3>
       <div className="mt-2 flex flex-wrap items-center gap-3">
         {item.cvFile && (
-          <a
+          <DownloadFileButton
             href={`/api/applications/${item.id}/assets/${item.cvFile.assetId}`}
-            download={item.cvFile.filename ?? undefined}
+            filename={item.cvFile.filename}
             className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
           >
             Download tailored CV
-          </a>
+          </DownloadFileButton>
         )}
       </div>
       {item.coverLetter && (

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import ApplicationsTabs from "@/app/components/ApplicationsTabs";
+import DownloadFileButton from "@/app/components/DownloadFileButton";
 import type { ReviewItem } from "@/lib/repositories/review";
 
 type Filter = "pending" | "approved" | "rejected" | "failed" | "withdrawn" | "all";
@@ -235,13 +236,13 @@ export default function ReviewQueue() {
                 {/* CV Download */}
                 {result.cvFile && (
                   <div className="mt-4">
-                    <a
+                    <DownloadFileButton
                       href={`/api/applications/${result.id}/assets/${result.cvFile.assetId}`}
-                      download={result.cvFile.filename ?? undefined}
-                      className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                      filename={result.cvFile.filename}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                     >
                       Download tailored CV
-                    </a>
+                    </DownloadFileButton>
                   </div>
                 )}
 
