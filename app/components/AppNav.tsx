@@ -36,7 +36,7 @@ export default function AppNav() {
       {/* Desktop / tablet: top bar */}
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="app-shell flex h-16 items-center justify-between gap-6">
-          <Link href="/" className="flex items-center gap-2.5 font-semibold tracking-tight text-slate-900">
+          <Link href="/" className="flex min-h-11 items-center gap-2.5 font-semibold tracking-tight text-slate-900">
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-sm font-bold text-white" aria-hidden="true">J</span>
             <span className="text-[17px]">Job Agent</span>
           </Link>

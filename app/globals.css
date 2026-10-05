@@ -62,3 +62,18 @@ html {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Touch screens: every button, form control and button-styled link is at least
+   44px tall (the bottom tab bar's links are already 56px). Inline text links,
+   badges and checkboxes are unchanged. Phones and tablets only: a mouse keeps
+   the compact desktop sizing. */
+@media (pointer: coarse) {
+  button,
+  summary,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+  textarea,
+  a[class*="min-h-"]:not([class*="min-h-14"]) {
+    min-height: 44px;
+  }
+}

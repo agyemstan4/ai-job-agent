@@ -207,7 +207,7 @@ function ApplyNowLink({ url }: { url: string | null }) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="rounded-lg bg-indigo-600 px-6 py-2 font-semibold text-white hover:bg-indigo-500"
+      className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-6 py-2 font-semibold text-white hover:bg-indigo-500"
     >
       Apply Now ↗
     </a>
@@ -227,7 +227,7 @@ function ApprovedAssets({ item }: { item: ReviewItem }) {
           <a
             href={`/api/applications/${item.id}/assets/${item.cvFile.assetId}`}
             download={item.cvFile.filename ?? undefined}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
           >
             Download tailored CV
           </a>
