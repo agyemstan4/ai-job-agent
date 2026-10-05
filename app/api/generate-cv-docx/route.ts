@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sendEmailCopy, tailoredCvEmail } from "@/lib/email-copies";
 import { renderCvDocument } from "@/lib/generation/cv-document";
+import { attachmentHeaders } from "@/lib/download-headers";
 
 export const runtime = "nodejs";
 
@@ -23,10 +24,7 @@ export async function POST(req: Request) {
     // Return the file to the browser for download
     return new NextResponse(new Uint8Array(file.buffer), {
       status: 200,
-      headers: {
-        "Content-Type": file.mimeType,
-        "Content-Disposition": `attachment; filename="${file.filename}"`,
-      },
+      headers: attachmentHeaders(file.filename, file.mimeType),
     });
 
   } catch (error) {

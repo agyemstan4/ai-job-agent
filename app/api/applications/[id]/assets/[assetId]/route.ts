@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { getAsset, getAssetFile } from "@/lib/repositories/applications";
+import { attachmentHeaders } from "@/lib/download-headers";
 
 // Downloads a stored file asset (the tailored CV) of an application.
 export async function GET(
@@ -14,12 +15,8 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const file = getAssetFile(db, asset.id)!;
-    const filename = String(asset.filename || "CV.pdf").replace(/[^\w.-]/g, "_");
     return new NextResponse(new Uint8Array(file), {
-      headers: {
-        "Content-Type": asset.mimeType || "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-      },
+      headers: attachmentHeaders(asset.filename || "CV.pdf", asset.mimeType),
     });
   } catch (error) {
     console.error("GET /api/applications/[id]/assets/[assetId] error:", error);

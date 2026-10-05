@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getResultById } from "@/lib/db";
+import { attachmentHeaders } from "@/lib/download-headers";
 
 export async function GET(
   _req: NextRequest,
@@ -19,12 +20,10 @@ export async function GET(
     const filename = String(result.cv_filename || "CV.pdf").replace(/[^\w.-]/g, "_");
     const isDocx = filename.toLowerCase().endsWith(".docx");
     return new NextResponse(result.cv_file, {
-      headers: {
-        "Content-Type": isDocx
-          ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          : "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-      },
+      headers: attachmentHeaders(
+        filename,
+        isDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/pdf"
+      ),
     });
   } catch (error) {
     console.error("GET /api/batch-results/[id] error:", error);
