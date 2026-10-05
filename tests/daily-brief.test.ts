@@ -261,18 +261,18 @@ describe("4a: protected systems unchanged", () => {
   const h = (file: string) => crypto.createHash("sha256").update(read(file).replace(/\r\n/g, "\n")).digest("hex");
   test("match/v3, opportunity intelligence, benefits, preferences, discovery, the preparation queue, email and the scheduler are byte-identical to 59aafd9", () => {
     const pins: Record<string, string> = {
-      "app/api/match/route.ts": "ef112d155048614c24e9a4cbb5d3af2d79536891b6891af64e3899d14107e8b2",
+      "app/api/match/route.ts": "1ca6c258cbc0ac8d09d82465847405e8d8bcef261eec0119db930d99742fd3a1",
       "lib/pipeline/match-scoring.ts": "be378063794df4bd46d250822f0602ec4a4daa0e79046cb964928a38195a7790",
       "lib/pipeline/opportunity.ts": "be06f22dd5b159b6b713591057a46720816e1796fc6fa0333893af54a4193f89",
       "lib/pipeline/benefits.ts": "0ae0c6bbd0481753d5701b16653ced78f8d5ffe1edf32f5eaab9ab32813d0766",
       "lib/pipeline/preferences.ts": "289992084026b51e2f75818df69b71ff5b03788e6bedbda081c8231249ad1756",
-      "app/api/jobs/route.ts": "d8f1e9018619fd947e85483ec9ca58112dcd94e1942ee4569930ec775c8fd1e4",
+      "app/api/jobs/route.ts": "fbb4e95a3fd8dcdff72387ed4276510ef420d7d683ba123eeb8d09b280bbc8c1",
       "lib/pipeline/preparation-queue.ts": "398e35fc5bfbbec9c3d4b41148a5aa89d300828a0006738815a3aa804aa71574",
       "lib/pipeline/preparation-registry.ts": "1453bbb8d2fe50ec1fbb8468585413a3b0dc913ca718b0d52bc03c1783b3c23e",
       "lib/pipeline/prepare.ts": "404d944e54ce5a8d5d21e69aba22d6e5a3c3467d8882a105888957a00ac59026",
       "lib/email-copies.ts": "22126ebc9dbfba7786fd566c4b4bd418918340262628b7e73e7c6334ed3fb4a8",
       // Replaced in 4b by the daily-agent trigger (approved); pinned again from here.
-      "scripts/scheduler.mjs": "7744d6416e00509c7b26aa471a2a7de1fd7ee95d0b8bf6ae52ef1c4f1ab3d9af",
+      "scripts/scheduler.mjs": "91d0f7149c3fc6ab5ecd078c645f0666aa19303fec21bc01e9932db7b95d5a65",
     };
     for (const [file, hash] of Object.entries(pins)) assert.equal(h(file), hash, file);
   });

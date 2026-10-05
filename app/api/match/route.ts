@@ -157,7 +157,7 @@ export async function POST(req: Request) {
 
   let session: MatchingSession | null = null;
   try {
-    const { candidate, jobs, candidateProfileId } = await req.json();
+    const { candidate, jobs, candidateProfileId, triggeredBy } = await req.json();
 
     // Logs carry counts, scores and timings only — never the candidate profile,
     // job descriptions or the model's text (see README: privacy).
@@ -182,7 +182,7 @@ console.log("🔎 SELECTED JOB COUNT:", selectedJobs.length);
     // Scoring failures by jobNumber (1-based index into selectedJobs).
     const failures = new Map<number, string>();
     try {
-      session = beginMatching(db, { candidateProfileId, params: { jobsReceived: jobs.length } });
+      session = beginMatching(db, { candidateProfileId, triggeredBy: triggeredBy === "scheduler" ? "scheduler" : "ui", params: { jobsReceived: jobs.length } });
       if (session) persistenceWarnings.push(...session.warnings);
     } catch (error) {
       persistenceWarnings.push(`Matches are not being saved: ${error instanceof Error ? error.message : String(error)}`);

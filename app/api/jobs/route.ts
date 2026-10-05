@@ -5,10 +5,12 @@ import type { DiscoveredListing } from "@/lib/pipeline/discovery";
 import { describeError } from "@/lib/log-safety";
 import { applyDiscoveryFilter, preferencesForProfile, searchPlan } from "@/lib/pipeline/preferences";
 import type { SearchPreferences } from "@/lib/pipeline/preferences";
+import { DISCOVERY_REPORT_HEADER, searchSource } from "@/lib/pipeline/source-search";
+import type { SourceStatus } from "@/lib/pipeline/source-search";
 
 export async function POST(req: Request) {
   try {
-    const { role, location, candidateProfileId, triggeredBy } = await req.json();
+    const { role, location, candidateProfileId, triggeredBy, requirePreferences } = await req.json();
 
     const appId = process.env.ADZUNA_APP_ID;
     const appKey = process.env.ADZUNA_APP_KEY;
@@ -21,7 +23,7 @@ export async function POST(req: Request) {
       );
     }
 
-    let failedRequests = 0;
+    const sourceStatuses: SourceStatus[] = [];
 
     // Search preferences (lib/pipeline/preferences.ts) of the candidate behind
     // the profile. None saved, no profile (the scheduler) or unreadable: the
@@ -32,6 +34,11 @@ export async function POST(req: Request) {
     } catch (error) {
       console.warn("Search preferences unavailable; using the defaults:", describeError(error));
     }
+    // The daily agent requires saved preferences: if they cannot be read, stop
+    // before any request instead of silently searching the defaults.
+    if (requirePreferences === true && !preferences) {
+      return NextResponse.json({ error: "Saved search preferences could not be read; no search was made." }, { status: 409 });
+    }
     const { terms: searchTerms, location: searchLocation } = searchPlan(preferences, { role, location });
     console.log(
       "Search preferences:",
@@ -41,8 +48,9 @@ export async function POST(req: Request) {
     );
 
     // ── Adzuna ──────────────────────────────────────────────────────────────
+    // Each site is searched one term at a time (rate-limit safe: source-search.ts).
     const fetchAdzuna = async () => {
-      const fetches = searchTerms.map(async (term) => {
+      const { results: allJobs, status } = await searchSource("Adzuna", searchTerms, async (term) => {
         const url = `https://api.adzuna.com/v1/api/jobs/gb/search/1?app_id=${appId}&app_key=${appKey}&results_per_page=20&what=${encodeURIComponent(term)}&where=${encodeURIComponent(searchLocation)}`;
         const response = await fetch(url).catch((error) => {
           console.log("Adzuna request error:", term, describeError(error));
@@ -50,15 +58,12 @@ export async function POST(req: Request) {
         });
         if (!response || !response.ok) {
           console.log("Adzuna failed:", term, response?.status);
-          failedRequests++;
-          return [];
+          return { status: response?.status ?? null, results: [] };
         }
         const data = await response.json();
-        return data.results || [];
+        return { status: response.status, results: data.results || [] };
       });
-
-      const results = await Promise.all(fetches);
-      const allJobs = results.flat();
+      sourceStatuses.push(status);
 
       return allJobs.map((job: any) => ({
         id: `adzuna_${job.id || job.redirect_url}`,
@@ -80,7 +85,7 @@ export async function POST(req: Request) {
     const fetchReed = async () => {
       if (!reedKey) return [];
 
-      const fetches = searchTerms.map(async (term) => {
+      const { results: allJobs, status } = await searchSource("Reed", searchTerms, async (term) => {
         const url = `https://www.reed.co.uk/api/1.0/search?keywords=${encodeURIComponent(term)}&location=${encodeURIComponent(searchLocation)}&resultsToTake=20`;
         const response = await fetch(url, {
           headers: {
@@ -92,15 +97,12 @@ export async function POST(req: Request) {
         });
         if (!response || !response.ok) {
           console.log("Reed failed:", term, response?.status);
-          failedRequests++;
-          return [];
+          return { status: response?.status ?? null, results: [] };
         }
         const data = await response.json();
-        return data.results || [];
+        return { status: response.status, results: data.results || [] };
       });
-
-      const results = await Promise.all(fetches);
-      const allJobs = results.flat();
+      sourceStatuses.push(status);
 
       return allJobs.map((job: any) => ({
         id: `reed_${job.jobId}`,
@@ -124,6 +126,7 @@ export async function POST(req: Request) {
     const allJobs = [...adzunaJobs, ...reedJobs];
     console.log("TOTAL RAW JOBS:", allJobs.length);
 
+    const failedRequests = sourceStatuses.reduce((sum, st) => sum + st.failed + st.skipped, 0);
     if (allJobs.length === 0 && failedRequests > 0) {
       return NextResponse.json(
         {
@@ -216,7 +219,10 @@ export async function POST(req: Request) {
       console.log("Left out by preferences:", { excludedByKeyword: filtered.excludedByKeyword, belowMinSalary: filtered.belowMinSalary, returned: newJobs.length });
     }
 
-    return NextResponse.json(newJobs);
+    // The body stays the plain job list; what was searched and how each site
+    // answered travels in a header (the daily agent reports partial failures).
+    const report = { usedPreferences: preferences !== null, terms: searchTerms.length, sources: sourceStatuses };
+    return NextResponse.json(newJobs, { headers: { [DISCOVERY_REPORT_HEADER]: JSON.stringify(report) } });
   } catch (error) {
     console.error("POST /api/jobs error:", describeError(error));
     return NextResponse.json(

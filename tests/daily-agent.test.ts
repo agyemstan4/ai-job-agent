@@ -115,7 +115,7 @@ describe("4b: the daily run", () => {
     assert.deepEqual([brief.status, brief.origin, brief.candidateProfileId], ["ready", "scheduled_run", profileId]);
     const items = getBriefItems(t.db, brief.id);
     assert.deepEqual(items.map((i) => [i.jobId, i.rank, i.wasNew]), [[a, 1, true], [b, 2, true]]);
-    assert.deepEqual(r.stats, { considered: 2, strongMatches: 1, priorityCount: 2, items: 2, newInBrief: 2, discovered: 2, scored: 2, warnings: [] });
+    assert.deepEqual(r.stats, { considered: 2, strongMatches: 1, priorityCount: 2, items: 2, newInBrief: 2, discovered: 2, scored: 2, searchedWith: "default_search", searchTerms: null, sources: null, partialSources: [], warnings: [] });
     assert.equal(count(t.db, "opportunity_states", "candidate_id = ?", candidateId), 2);
     assert.equal(count(t.db, "pipeline_runs", "kind = 'full' AND status = 'completed' AND triggered_by = 'scheduler'"), 1);
   });
@@ -330,11 +330,11 @@ describe("4b: Today consumes the saved brief", () => {
 
 describe("4b: protected systems unchanged", () => {
   const h = (file: string) => crypto.createHash("sha256").update(read(file).replace(/\r\n/g, "\n")).digest("hex");
-  test("discovery, matching, opportunity intelligence, benefits, preferences, the preparation queue and email are byte-identical to 3043c13", () => {
+  test("discovery, matching, opportunity intelligence, benefits, preferences, the preparation queue and email are byte-identical to 3043c13 (except the reliability-pass plumbing in match/jobs routes: triggeredBy, sequential search, discovery report)", () => {
     const pins: Record<string, string> = {
-      "app/api/match/route.ts": "ef112d155048614c24e9a4cbb5d3af2d79536891b6891af64e3899d14107e8b2",
+      "app/api/match/route.ts": "1ca6c258cbc0ac8d09d82465847405e8d8bcef261eec0119db930d99742fd3a1",
       "lib/pipeline/match-scoring.ts": "be378063794df4bd46d250822f0602ec4a4daa0e79046cb964928a38195a7790",
-      "app/api/jobs/route.ts": "d8f1e9018619fd947e85483ec9ca58112dcd94e1942ee4569930ec775c8fd1e4",
+      "app/api/jobs/route.ts": "fbb4e95a3fd8dcdff72387ed4276510ef420d7d683ba123eeb8d09b280bbc8c1",
       "lib/pipeline/opportunity.ts": "be06f22dd5b159b6b713591057a46720816e1796fc6fa0333893af54a4193f89",
       "lib/pipeline/benefits.ts": "0ae0c6bbd0481753d5701b16653ced78f8d5ffe1edf32f5eaab9ab32813d0766",
       "lib/pipeline/preferences.ts": "289992084026b51e2f75818df69b71ff5b03788e6bedbda081c8231249ad1756",

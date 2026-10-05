@@ -6,6 +6,7 @@ import { runDailyAgent } from "@/lib/pipeline/daily-run";
 import type { DiscoveredJob } from "@/lib/pipeline/daily-run";
 import { DEFAULT_HOME_ROLE } from "@/lib/preferences-client";
 import { describeError } from "@/lib/log-safety";
+import { DISCOVERY_REPORT_HEADER, readDiscoveryReport } from "@/lib/pipeline/source-search";
 
 // The daily career agent (Phase 4b) — POST, from this machine only (the
 // 06:30 scheduled task runs scripts/scheduler.mjs, which calls this). It
@@ -46,20 +47,27 @@ export async function POST(req: NextRequest) {
           new Request("http://localhost/api/jobs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            // With no saved preferences, the same default search as the home page.
-            body: JSON.stringify({ role: usingPreferences ? undefined : DEFAULT_HOME_ROLE, location: "London", candidateProfileId, triggeredBy: "scheduler" }),
+            // Saved preferences decide the search (requirePreferences: never silently fall
+            // back to the defaults); with none saved, the home page's default search.
+            body: JSON.stringify({
+              role: usingPreferences ? undefined : DEFAULT_HOME_ROLE,
+              location: "London",
+              candidateProfileId,
+              triggeredBy: "scheduler",
+              requirePreferences: usingPreferences,
+            }),
           })
         );
         const body = (await res.json().catch(() => null)) as unknown;
         if (!res.ok || !Array.isArray(body)) return { ok: false, error: `discovery HTTP ${res.status}` };
-        return { ok: true, jobs: (body as Record<string, unknown>[]).map(forMatching) };
+        return { ok: true, jobs: (body as Record<string, unknown>[]).map(forMatching), report: readDiscoveryReport(res.headers.get(DISCOVERY_REPORT_HEADER)) };
       },
       match: async ({ candidateProfileId, analysis, jobs }) => {
         const res = await matchJobs(
           new Request("http://localhost/api/match", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ candidate: analysis, jobs, candidateProfileId }),
+            body: JSON.stringify({ candidate: analysis, jobs, candidateProfileId, triggeredBy: "scheduler" }),
           })
         );
         const body = (await res.json().catch(() => null)) as { matches?: unknown[] } | null;

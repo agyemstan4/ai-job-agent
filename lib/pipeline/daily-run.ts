@@ -2,7 +2,10 @@ import type { DB } from "../repositories/shared.ts";
 import { PersistenceError } from "../repositories/shared.ts";
 import { getCandidate, getCurrentProfile, getDefaultCandidate } from "../repositories/candidates.ts";
 import { cancelRun, completeRun, failRun, failStaleRuns, startRun } from "../repositories/runs.ts";
-import { claimBrief, completeBrief, failBrief, surfacedJobIds, touchBrief } from "../repositories/briefs.ts";
+import { claimBrief, completeBrief, failBrief, getLatestReadyBrief, surfacedJobIds, touchBrief } from "../repositories/briefs.ts";
+import { parseStoredTime } from "../dashboard-client.ts";
+import { sourceWarnings } from "./source-search.ts";
+import type { DiscoveryReport } from "./source-search.ts";
 import { getDashboard, MAX_TOP_MATCHES } from "./dashboard.ts";
 import { storedPreferences } from "./preferences.ts";
 import { getPreparationStatus } from "./preparation-queue.ts";
@@ -34,7 +37,7 @@ export type DiscoveredJob = Record<string, unknown> & { jobId?: number };
 
 export type DailyRunDeps = {
   /** The existing discovery (search plan, sources, deduplication, already-processed checks). Returns the new jobs. */
-  discover: (input: { candidateProfileId: number; usingPreferences: boolean }) => Promise<{ ok: true; jobs: DiscoveredJob[] } | { ok: false; error: string }>;
+  discover: (input: { candidateProfileId: number; usingPreferences: boolean }) => Promise<{ ok: true; jobs: DiscoveredJob[]; report?: DiscoveryReport | null } | { ok: false; error: string }>;
   /** The existing matching for those jobs (bounded by the matcher itself). */
   match: (input: { candidateProfileId: number; analysis: unknown; jobs: DiscoveredJob[] }) => Promise<{ ok: true; scored: number } | { ok: false; error: string }>;
   now?: () => Date;
@@ -88,10 +91,15 @@ export async function runDailyAgent(db: DB, deps: DailyRunDeps, options: { candi
     // 3. Discover (existing search plan, sources and deduplication).
     const usingPreferences = storedPreferences(candidate.preferences) !== null;
     let jobs: DiscoveredJob[] = [];
+    let report: DiscoveryReport | null = null;
     try {
       const found = await deps.discover({ candidateProfileId: profile.id, usingPreferences });
-      if (found.ok) jobs = found.jobs;
-      else warnings.push(`discovery_failed: ${found.error}`);
+      if (found.ok) {
+        jobs = found.jobs;
+        report = found.report ?? null;
+        // A site that was rate limited or unavailable is never reported as a success.
+        if (report) warnings.push(...sourceWarnings(report.sources));
+      } else warnings.push(`discovery_failed: ${found.error}`);
     } catch (error) {
       warnings.push(`discovery_failed: ${message(error)}`);
     }
@@ -112,8 +120,18 @@ export async function runDailyAgent(db: DB, deps: DailyRunDeps, options: { candi
 
     // 5. Prioritise with the existing intelligence; "new" = not in any earlier brief.
     const dashboard = getDashboard(db, { limit: MAX_TOP_MATCHES });
+    // "New" = not in an earlier brief AND found since the previous brief (or, for
+    // the very first brief, found by this run). Opportunities that were already
+    // seen and scored before the first brief are therefore not "new".
     const surfaced = surfacedJobIds(db, candidate.id);
-    const brief = buildDailyBrief(dashboard, getPreparationStatus(db), { now, origin: "scheduled_run", isNew: (m) => !surfaced.has(m.jobId) });
+    const foundThisRun = new Set(jobs.map((j) => j.jobId).filter((id): id is number => typeof id === "number"));
+    const previous = getLatestReadyBrief(db, candidate.id);
+    const sincePrevious = previous?.generatedAt ? parseStoredTime(previous.generatedAt) : null;
+    const brief = buildDailyBrief(dashboard, getPreparationStatus(db), {
+      now,
+      origin: "scheduled_run",
+      isNew: (m) => !surfaced.has(m.jobId) && (foundThisRun.has(m.jobId) || (sincePrevious !== null && (parseStoredTime(m.firstSeenAt) ?? 0) > sincePrevious)),
+    });
 
     // 6. Save the brief (one transaction) and finish the run.
     const stats = {
@@ -124,6 +142,10 @@ export async function runDailyAgent(db: DB, deps: DailyRunDeps, options: { candi
       newInBrief: brief.items.filter((i) => i.isNew).length,
       discovered: jobs.length,
       scored,
+      searchedWith: usingPreferences ? "saved_preferences" : "default_search",
+      searchTerms: report?.terms ?? null,
+      sources: report?.sources ?? null,
+      partialSources: report ? report.sources.filter((s) => s.failed > 0 || s.skipped > 0).map((s) => s.source) : [],
       warnings,
     };
     completeBrief(

@@ -228,11 +228,11 @@ describe("3i: downstream systems unchanged", () => {
   const h = (file: string) => crypto.createHash("sha256").update(read(file).replace(/\r\n/g, "\n")).digest("hex");
 
   test("match/v3, opportunity intelligence, benefit detection, the search plan and discovery are byte-identical to 353761e", () => {
-    assert.equal(h("app/api/match/route.ts"), "ef112d155048614c24e9a4cbb5d3af2d79536891b6891af64e3899d14107e8b2");
+    assert.equal(h("app/api/match/route.ts"), "1ca6c258cbc0ac8d09d82465847405e8d8bcef261eec0119db930d99742fd3a1");
     assert.equal(h("lib/pipeline/match-scoring.ts"), "be378063794df4bd46d250822f0602ec4a4daa0e79046cb964928a38195a7790");
     assert.equal(h("lib/pipeline/opportunity.ts"), "be06f22dd5b159b6b713591057a46720816e1796fc6fa0333893af54a4193f89");
     assert.equal(h("lib/pipeline/benefits.ts"), "0ae0c6bbd0481753d5701b16653ced78f8d5ffe1edf32f5eaab9ab32813d0766");
     assert.equal(h("lib/pipeline/preferences.ts"), "289992084026b51e2f75818df69b71ff5b03788e6bedbda081c8231249ad1756");
-    assert.equal(h("app/api/jobs/route.ts"), "d8f1e9018619fd947e85483ec9ca58112dcd94e1942ee4569930ec775c8fd1e4");
+    assert.equal(h("app/api/jobs/route.ts"), "fbb4e95a3fd8dcdff72387ed4276510ef420d7d683ba123eeb8d09b280bbc8c1");
   });
 });

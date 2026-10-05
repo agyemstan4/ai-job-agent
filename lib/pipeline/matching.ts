@@ -40,7 +40,7 @@ export type MatchingSession = {
  */
 export function beginMatching(
   db: DB,
-  input: { candidateProfileId: unknown; params?: Record<string, unknown> | null }
+  input: { candidateProfileId: unknown; triggeredBy?: "ui" | "scheduler"; params?: Record<string, unknown> | null }
 ): MatchingSession | null {
   if (typeof input.candidateProfileId !== "number" || !getProfile(db, input.candidateProfileId)) {
     return null;
@@ -48,7 +48,7 @@ export function beginMatching(
   const warnings: string[] = [];
   const run = startRunIfFree(db, {
     kind: "matching",
-    triggeredBy: "ui",
+    triggeredBy: input.triggeredBy ?? "ui",
     candidateProfileId: input.candidateProfileId,
     params: input.params ?? null,
   });

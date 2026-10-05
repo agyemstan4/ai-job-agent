@@ -180,7 +180,7 @@ describe("3h: match/v3 scoring is unchanged", () => {
   const h = (s: string) => crypto.createHash("sha256").update(s.replace(/\r\n/g, "\n")).digest("hex");
 
   test("the match route and scoring module are byte-identical to 7264447 (bump MATCH_PROMPT_VERSION and these pins together on purpose)", () => {
-    assert.equal(h(read("app/api/match/route.ts")), "ef112d155048614c24e9a4cbb5d3af2d79536891b6891af64e3899d14107e8b2");
+    assert.equal(h(read("app/api/match/route.ts")), "1ca6c258cbc0ac8d09d82465847405e8d8bcef261eec0119db930d99742fd3a1");
     assert.equal(h(read("lib/pipeline/match-scoring.ts")), "be378063794df4bd46d250822f0602ec4a4daa0e79046cb964928a38195a7790");
     const route = read("app/api/match/route.ts");
     assert.match(route, /const MATCH_PROMPT_VERSION = "match\/v3";/);

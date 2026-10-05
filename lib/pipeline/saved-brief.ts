@@ -18,6 +18,17 @@ export type SavedBriefView = { brief: DailyBrief | null; status: SavedBrief["sta
 
 const localDate = (now: Date) => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
+/** Plain-language text for a warning stored by the daily run. */
+function warningText(w: string): string {
+  if (w.startsWith("discovery_failed")) return "Some job sites couldn't be reached during the last run.";
+  const partial = /^source_partial: (\S+) (rate-limited|unavailable) — (\d+) of (\d+) searches not completed$/.exec(w);
+  if (partial) {
+    const [, site, why, missed, planned] = partial;
+    return `${site} was ${why === "rate-limited" ? "rate-limited" : "unavailable"} during the last run, so ${missed} of ${planned} searches didn't finish — results may be incomplete.`;
+  }
+  return "Some new jobs couldn't be checked yet — your agent will try again.";
+}
+
 /** Today's saved brief for the default candidate, composed with live data (null when none is ready). */
 export function getTodaysSavedBrief(db: DB, now: Date = new Date()): SavedBriefView {
   const briefDate = localDate(now);
@@ -83,7 +94,7 @@ export function getTodaysSavedBrief(db: DB, now: Date = new Date()): SavedBriefV
       lastSearchAt: dashboard.agent.lastDiscoveryAt,
       away: away.newOpportunities + away.applicationsReady > 0 ? away : null,
       savedBriefId: saved.id,
-      warnings: (stats.warnings ?? []).map((w) => (w.startsWith("discovery_failed") ? "Some job sites couldn't be reached during the last run." : "Some new jobs couldn't be checked yet — your agent will try again.")),
+      warnings: (stats.warnings ?? []).map(warningText),
     },
   };
 }

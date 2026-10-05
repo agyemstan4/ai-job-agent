@@ -396,7 +396,7 @@ describe("3b-5a: /api/jobs uses the preferences; the scheduler does not", () => 
   test("both searches use the planned terms and location; no fixed term list is left in the route", () => {
     assert.match(jobs, /what=\$\{encodeURIComponent\(term\)\}&where=\$\{encodeURIComponent\(searchLocation\)\}/);
     assert.match(jobs, /keywords=\$\{encodeURIComponent\(term\)\}&location=\$\{encodeURIComponent\(searchLocation\)\}/);
-    assert.equal((jobs.match(/searchTerms\.map\(/g) ?? []).length, 2);
+    assert.equal((jobs.match(/searchSource\("(Adzuna|Reed)", searchTerms,/g) ?? []).length, 2);
     assert.equal(jobs.includes('"graduate software developer"'), false);
     assert.equal(/encodeURIComponent\(location\)/.test(jobs), false);
   });
@@ -405,7 +405,7 @@ describe("3b-5a: /api/jobs uses the preferences; the scheduler does not", () => 
     assert.match(jobs, /if \(preferences\) \{[\s\S]*applyDiscoveryFilter\(preferences, newJobs,[\s\S]*newJobs = filtered\.kept;/);
     assert.match(jobs, /job\.source === "Adzuna" && job\.raw\?\.salary_is_predicted !== undefined/);
     assert.ok(jobs.indexOf("applyDiscoveryFilter(") > jobs.indexOf('console.log("NEW (not processed before):"'));
-    assert.ok(jobs.indexOf("applyDiscoveryFilter(") < jobs.indexOf("return NextResponse.json(newJobs);"));
+    assert.ok(jobs.indexOf("applyDiscoveryFilter(") < jobs.indexOf("return NextResponse.json(newJobs, {"));
   });
 
   test("logs carry counts, never the location or keyword text", () => {
@@ -418,10 +418,10 @@ describe("3b-5a: /api/jobs uses the preferences; the scheduler does not", () => 
 
   test("since 4b the scheduler only triggers the daily agent, which searches with the stored profile and preferences", () => {
     const scheduler = read("scripts/scheduler.mjs");
-    assert.ok(scheduler.includes('fetch(`${BASE_URL}/api/agent/daily-run`, { method: "POST" })'));
+    assert.ok(scheduler.includes('fetchImpl(`${baseUrl}/api/agent/daily-run`, { method: "POST", dispatcher: longTimeout })'));
     assert.equal(/technicalSkills|summary:|\/api\/jobs|\/api\/match/.test(scheduler), false, "no hard-coded CV, no direct search or matching");
     const route = read("app/api/agent/daily-run/route.ts");
-    assert.ok(route.includes('candidateProfileId, triggeredBy: "scheduler"'));
+    assert.match(route, /candidateProfileId,\s+triggeredBy: "scheduler"/);
   });
 
   test("the preferences route is thin: GET and PUT through the handlers", () => {
